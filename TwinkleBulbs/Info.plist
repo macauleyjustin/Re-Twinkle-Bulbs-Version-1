@@ -13,15 +13,15 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>TwinkleBulbs</string>
+	<string>Re: Twinkle Bulbs</string>
 	<key>CFBundleDisplayName</key>
-	<string>Twinkle Bulbs 6.0</string>
+	<string>Re: Twinkle Bulbs</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>6.0</string>
+	<string>1.0.6</string>
 	<key>CFBundleVersion</key>
-	<string>600</string>
+	<string>106</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
 	<key>LSUIElement</key>
@@ -29,6 +29,6 @@
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSHumanReadableCopyright</key>
-	<string>Clean-room macOS reconstruction of Twinkle Bulbs v6.0</string>
+	<string>Re: Twinkle Bulbs v1.0.6 — Complete Holiday Edition (macOS)</string>
 </dict>
 </plist>

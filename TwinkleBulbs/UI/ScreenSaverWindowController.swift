@@ -356,7 +356,7 @@ public final class ScreenSaverCanvasView: NSView {
                 .font: logoFont,
                 .foregroundColor: NSColor(white: 0.72, alpha: 0.78)
             ]
-            let s = "Twinkle Bulbs 6.0" as NSString
+            let s = "Re: Twinkle Bulbs" as NSString
             s.draw(at: CGPoint(x: inset.minX + 12, y: inset.minY + 10), withAttributes: attrs)
         }
 

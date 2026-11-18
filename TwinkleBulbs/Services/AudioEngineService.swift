@@ -266,7 +266,7 @@ public final class AudioEngineService: NSObject, ObservableObject, AVAudioPlayer
                     midiSynth.play()
                     currentTrackTitle = track.title
                     let chCount = parsed.channelsUsed.count
-                    currentTrackFormatInfo = "SMF Type \(parsed.format) • \(parsed.trackCount) tracks • \(chCount) ch\(parsed.hasPercussion ? " + Drums" : "")"
+                    currentTrackFormatInfo = "TwinkleSynth GM • SMF Type \(parsed.format) • \(parsed.trackCount) tracks • \(chCount) ch\(parsed.hasPercussion ? " + Drums" : "")"
                 } else {
                     let player = try AVAudioPlayer(contentsOf: url)
                     player.delegate = self
@@ -283,7 +283,7 @@ public final class AudioEngineService: NSObject, ObservableObject, AVAudioPlayer
                 midiSynth.onMIDIEvent = onMIDINoteEvent
                 midiSynth.play()
                 currentTrackTitle = track.title
-                currentTrackFormatInfo = "GM Multi-Track (\(parsed.channelsUsed.count) ch + Sleigh Bells)"
+                currentTrackFormatInfo = "TwinkleSynth GM • \(parsed.channelsUsed.count) ch + Sleigh Bells"
             } else {
                 throw NSError(domain: "TwinkleBulbsAudio", code: 400, userInfo: [NSLocalizedDescriptionKey: "Track has neither URL nor MIDI data."])
             }

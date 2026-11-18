@@ -91,7 +91,7 @@ public final class PreferencesWindowController: NSWindowController, NSTableViewD
             backing: .buffered,
             defer: false
         )
-        win.title = "Twinkle Bulbs — Settings"
+        win.title = "Re: Twinkle Bulbs — Settings"
         win.appearance = NSAppearance(named: .aqua)
         win.center()
         win.isReleasedWhenClosed = false
@@ -252,7 +252,7 @@ public final class PreferencesWindowController: NSWindowController, NSTableViewD
         for v: NSView in [monitorPreview, sysHighlightCheck, hlLbl, highlightWell] { prevBox.contentView?.addSubview(v) }
         view.addSubview(prevBox)
 
-        let verLbl = NSTextField(labelWithString: "Twinkle Bulbs 6.0 Complete Holiday Edition — Clean-Room Native macOS Reconstruction (Apple Silicon)")
+        let verLbl = NSTextField(labelWithString: "Re: Twinkle Bulbs v1.0.6 (Classic 6.0 Holiday Edition) — Apple Silicon Native")
         verLbl.font = .systemFont(ofSize: 11)
         verLbl.textColor = .secondaryLabelColor
         verLbl.frame = NSRect(x: 14, y: 36, width: 720, height: 20)
@@ -308,9 +308,9 @@ public final class PreferencesWindowController: NSWindowController, NSTableViewD
 
         bulbCountLabel.font = .systemFont(ofSize: 10)
         bulbCountLabel.textColor = .secondaryLabelColor
-        bulbCountLabel.frame = NSRect(x: 8, y: 48, width: 190, height: 15)
+        bulbCountLabel.frame = NSRect(x: 8, y: 48, width: 184, height: 15)
 
-        bulbFavBtn.frame = NSRect(x: 204, y: 45, width: 52, height: 20)
+        bulbFavBtn.frame = NSRect(x: 196, y: 45, width: 60, height: 20)
         bulbFavBtn.font = .systemFont(ofSize: 10.5)
         bulbFavBtn.target = self; bulbFavBtn.action = #selector(toggleFavoriteBulbSet)
 
@@ -887,7 +887,7 @@ private final class XPClassicHeaderView: NSView {
         if let sample = BulbArtworkRegistry.shared.sampleImage(for: "Outdoor") {
             ctx.draw(sample, in: CGRect(x: 10, y: 5, width: 24, height: 24))
         }
-        let title = "Twinkle Bulbs 6.0 — Complete Holiday Edition" as NSString
+        let title = "Re: Twinkle Bulbs — Complete Holiday Edition (v1.0.6)" as NSString
         let attrs: [NSAttributedString.Key: Any] = [
             .font: NSFont.boldSystemFont(ofSize: 13),
             .foregroundColor: NSColor.white

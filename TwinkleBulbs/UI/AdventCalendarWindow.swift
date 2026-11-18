@@ -45,7 +45,7 @@ public final class AdventCalendarWindowController: NSWindowController {
             backing: .buffered,
             defer: false
         )
-        win.title = "Twinkle Bulbs — Interactive Christmas Advent Calendar"
+        win.title = "Re: Twinkle Bulbs — Interactive Christmas Advent Calendar"
         win.appearance = NSAppearance(named: .aqua)
         win.center()
         win.isReleasedWhenClosed = false

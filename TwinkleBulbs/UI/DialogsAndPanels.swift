@@ -19,7 +19,7 @@ public final class QuickAccessPanelController: NSWindowController {
             backing: .buffered,
             defer: false
         )
-        panel.title = "Twinkle Bulbs Quick Access"
+        panel.title = "Re: Twinkle Bulbs Quick Access"
         panel.level = .floating
         panel.isReleasedWhenClosed = false
         self.init(window: panel)
@@ -126,16 +126,16 @@ final class SplashWindowController: NSWindowController {
             border.stroke()
 
             let titleAttrs: [NSAttributedString.Key: Any] = [
-                .font: NSFont.boldSystemFont(ofSize: 28),
+                .font: NSFont.boldSystemFont(ofSize: 26),
                 .foregroundColor: NSColor(srgbRed: 1.0, green: 0.90, blue: 0.35, alpha: 1.0)
             ]
             let subAttrs: [NSAttributedString.Key: Any] = [
                 .font: NSFont.systemFont(ofSize: 13),
                 .foregroundColor: NSColor(white: 0.90, alpha: 0.9)
             ]
-            ("Twinkle Bulbs 6.0" as NSString).draw(at: NSPoint(x: 56, y: 182), withAttributes: titleAttrs)
+            ("Re: Twinkle Bulbs" as NSString).draw(at: NSPoint(x: 72, y: 184), withAttributes: titleAttrs)
             ("Holiday Lights & Screen Saver Suite for macOS" as NSString).draw(at: NSPoint(x: 34, y: 152), withAttributes: subAttrs)
-            ("Clean-Room Native AppKit Reconstruction" as NSString).draw(at: NSPoint(x: 54, y: 122), withAttributes: subAttrs)
+            ("Complete Holiday Edition • Version 1.0.6" as NSString).draw(at: NSPoint(x: 56, y: 122), withAttributes: subAttrs)
         }
     }
 
@@ -278,20 +278,20 @@ final class AboutWindowController: NSWindowController {
             backing: .buffered,
             defer: false
         )
-        win.title = "About Twinkle Bulbs"
+        win.title = "About Re: Twinkle Bulbs"
         win.isReleasedWhenClosed = false
         win.center()
         self.init(window: win)
 
         guard let root = win.contentView else { return }
-        let title = NSTextField(labelWithString: "Twinkle Bulbs 6.0 for macOS")
+        let title = NSTextField(labelWithString: "Re: Twinkle Bulbs v1.0.6")
         title.font = .boldSystemFont(ofSize: 18)
         title.frame = NSRect(x: 24, y: 196, width: 372, height: 28)
         root.addSubview(title)
 
         let body = NSTextField(wrappingLabelWithString:
-            "Faithful clean-room native macOS reconstruction modeled after Barefoot Productions Twinkle Bulbs v6.0.\n\n" +
-            "Includes all 21 color modes, 9 flashing sequences, 50 ms step timing fidelity, 4 built-in screen savers, desktop overlay & menu bar modes, holiday countdown calendar, wallpaper rotation, and clean-room PE .blb / .icl / .ico asset importing."
+            "Complete Holiday Edition for macOS (Classic v6.0 Compatibility Mode).\n\n" +
+            "Includes 265 bulb sets across 25 themed collections, 9 classic flashing modes & 15 modern lighting effects, 21 color modes, 25 seasonal & classic screen savers, 130 wallpapers, interactive 24-door Advent calendar, 105 GM MIDI carols on the built-in TwinkleSynth DSP engine, and .blb/.icl/.ico/.blz/.sf2 asset support."
         )
         body.frame = NSRect(x: 24, y: 72, width: 372, height: 116)
         root.addSubview(body)
@@ -316,7 +316,7 @@ final class CalendarViewerController: NSWindowController, NSTableViewDataSource,
             backing: .buffered,
             defer: false
         )
-        win.title = "Twinkle Bulbs Event Calendar"
+        win.title = "Re: Twinkle Bulbs Event Calendar"
         win.isReleasedWhenClosed = false
         win.center()
         self.init(window: win)

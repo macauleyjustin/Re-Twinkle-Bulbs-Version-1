@@ -261,8 +261,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         if s.confirmExit {
             NSApp.activate(ignoringOtherApps: true)
             let alert = NSAlert()
-            alert.messageText = "Twinkle Bulbs 6.0"
-            alert.informativeText = "Exit Twinkle Bulbs?"
+            alert.messageText = "Re: Twinkle Bulbs"
+            alert.informativeText = "Exit Re: Twinkle Bulbs?"
             alert.addButton(withTitle: "Exit")
             alert.addButton(withTitle: "Cancel")
             if alert.runModal() != .alertFirstButtonReturn {
@@ -277,11 +277,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         let appItem = NSMenuItem()
         mainMenu.addItem(appItem)
         let sub = NSMenu()
-        sub.addItem(withTitle: "About Twinkle Bulbs", action: #selector(menuAbout), keyEquivalent: "")
+        sub.addItem(withTitle: "About Re: Twinkle Bulbs", action: #selector(menuAbout), keyEquivalent: "")
         sub.addItem(.separator())
         sub.addItem(withTitle: "Settings...", action: #selector(menuSettings), keyEquivalent: ",")
         sub.addItem(.separator())
-        sub.addItem(withTitle: "Quit Twinkle Bulbs", action: #selector(menuQuit), keyEquivalent: "q")
+        sub.addItem(withTitle: "Quit Re: Twinkle Bulbs", action: #selector(menuQuit), keyEquivalent: "q")
         appItem.submenu = sub
         NSApp.mainMenu = mainMenu
     }

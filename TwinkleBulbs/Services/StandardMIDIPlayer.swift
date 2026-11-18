@@ -1,6 +1,5 @@
 import Foundation
 import AVFoundation
-import AudioToolbox
 
 // MARK: - MIDI Parsing & Errors
 
@@ -341,51 +340,72 @@ public final class StandardMIDIFileParser {
     }
 }
 
-// MARK: - General MIDI / GS Wavetable Sound Bank Synth Player
+// MARK: - Native Self-Contained General MIDI Synthesizer & Sample-Accurate Player
 
 public final class MIDISynthPlayer {
-    public static let systemGSSoundBankPath = "/System/Library/Components/CoreAudio.component/Contents/Resources/gs_instruments.dls"
+    public let synthCore = TwinkleNativeGMSynth(sampleRate: 44100.0)
 
     public private(set) var activeSoundBankURL: URL?
+    public private(set) var activeSoundBankDescription: String = "TwinkleSynth Built-in GM (64-Voice DSP)"
     public private(set) var parsedMIDI: ParsedMIDIFile?
     public private(set) var isPlaying: Bool = false
     public private(set) var isPaused: Bool = false
-    public private(set) var currentPositionSeconds: Double = 0.0
-    public private(set) var peakOutputRMS: Float = 0.0
+    public var currentPositionSeconds: Double { synthCore.currentPositionSeconds }
+    public var peakOutputRMS: Float { max(synthCore.peakOutputRMS, tapPeakRMS) }
 
     public var volume: Double = 0.85 {
         didSet {
-            engine.mainMixerNode.outputVolume = Float(max(0.0, min(1.0, volume)))
+            let v = Float(max(0.0, min(1.0, volume)))
+            synthCore.masterVolume = v
+            engine.mainMixerNode.outputVolume = 1.0
         }
     }
 
-    public var onMIDIEvent: ((MIDILightEvent) -> Void)?
+    public var onMIDIEvent: ((MIDILightEvent) -> Void)? {
+        didSet { synthCore.onMIDIEvent = onMIDIEvent }
+    }
     public var onCompletion: (() -> Void)?
 
     private let engine = AVAudioEngine()
-    private let synth: AVAudioUnitMIDIInstrument
-    private let queue = DispatchQueue(label: "com.twinklebulbs.midisynth.scheduler", qos: .userInteractive)
-    private var timer: DispatchSourceTimer?
-
-    private var eventCursor: Int = 0
-    private var playStartHostTime: TimeInterval = 0
-    private var accumulatedOffsetSeconds: Double = 0
-    private var activeBPM: Double = 120.0
-    private var completedOnce: Bool = false
+    private var sourceNode: AVAudioSourceNode?
+    private var tapPeakRMS: Float = 0.0
     private var tapInstalled: Bool = false
 
     public init() {
-        let desc = AudioComponentDescription(
-            componentType: kAudioUnitType_MusicDevice,
-            componentSubType: kAudioUnitSubType_MIDISynth,
-            componentManufacturer: kAudioUnitManufacturer_Apple,
-            componentFlags: 0,
-            componentFlagsMask: 0
-        )
-        self.synth = AVAudioUnitMIDIInstrument(audioComponentDescription: desc)
-        engine.attach(synth)
-        engine.connect(synth, to: engine.mainMixerNode, format: nil)
-        engine.mainMixerNode.outputVolume = Float(volume)
+        let outFmt = engine.mainMixerNode.outputFormat(forBus: 0)
+        let hwRate = (outFmt.sampleRate >= 8000 && outFmt.sampleRate <= 192000) ? outFmt.sampleRate : 44100.0
+        synthCore.updateSampleRate(hwRate)
+        synthCore.masterVolume = Float(volume)
+
+        let renderFmt = AVAudioFormat(standardFormatWithSampleRate: hwRate, channels: 2)!
+        let core = synthCore
+        let node = AVAudioSourceNode(format: renderFmt) { _, _, frameCount, audioBufferList -> OSStatus in
+            let abl = UnsafeMutableAudioBufferListPointer(audioBufferList)
+            let count = Int(frameCount)
+            if abl.count >= 2,
+               let leftPtr = abl[0].mData?.assumingMemoryBound(to: Float.self),
+               let rightPtr = abl[1].mData?.assumingMemoryBound(to: Float.self) {
+                core.renderFrames(left: leftPtr, right: rightPtr, frameCount: count)
+            } else {
+                for buf in abl {
+                    if let p = buf.mData {
+                        memset(p, 0, Int(buf.mDataByteSize))
+                    }
+                }
+            }
+            return noErr
+        }
+        self.sourceNode = node
+        engine.attach(node)
+        engine.connect(node, to: engine.mainMixerNode, format: renderFmt)
+        engine.mainMixerNode.outputVolume = 1.0
+
+        synthCore.onCompletion = { [weak self] in
+            guard let self else { return }
+            self.isPlaying = false
+            self.isPaused = false
+            self.onCompletion?()
+        }
     }
 
     deinit {
@@ -394,39 +414,34 @@ public final class MIDISynthPlayer {
         engine.stop()
     }
 
-    /// Loads custom `.sf2`/`.dls` if specified, otherwise falls back to macOS Roland GS Wavetable (`gs_instruments.dls`).
+    /// Uses TwinkleSynth's built-in 64-voice General MIDI DSP engine by default (no Apple MIDISynth or gs_instruments.dls).
+    /// When a custom `.sf2` SoundFont path is given, parses its RIFF wavetable samples in-house into TwinkleSynth.
     public func configureSoundBank(customPath: String?) throws {
-        let resolvedURL: URL
-        if let cp = customPath, !cp.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            let customURL = URL(fileURLWithPath: cp)
-            guard FileManager.default.isReadableFile(atPath: customURL.path) else {
-                throw MIDIPlayerError.soundBankNotFound(cp)
-            }
-            resolvedURL = customURL
-        } else {
-            let sysURL = URL(fileURLWithPath: Self.systemGSSoundBankPath)
-            guard FileManager.default.isReadableFile(atPath: sysURL.path) else {
-                throw MIDIPlayerError.soundBankNotFound(sysURL.path)
-            }
-            resolvedURL = sysURL
+        let trimmed = customPath?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if trimmed.isEmpty {
+            activeSoundBankURL = nil
+            activeSoundBankDescription = "TwinkleSynth Built-in GM (64-Voice DSP)"
+            synthCore.setSoundFontBank(nil)
+            return
         }
 
-        if activeSoundBankURL == resolvedURL { return }
-        var cfURL: CFURL = resolvedURL as CFURL
-        let status = withUnsafePointer(to: &cfURL) { ptr in
-            AudioUnitSetProperty(
-                synth.audioUnit,
-                AudioUnitPropertyID(kMusicDeviceProperty_SoundBankURL),
-                AudioUnitScope(kAudioUnitScope_Global),
-                0,
-                ptr,
-                UInt32(MemoryLayout<CFURL>.size)
+        let customURL = URL(fileURLWithPath: trimmed)
+        guard FileManager.default.isReadableFile(atPath: customURL.path) else {
+            throw MIDIPlayerError.soundBankNotFound(trimmed)
+        }
+        if activeSoundBankURL == customURL { return }
+
+        let ext = customURL.pathExtension.lowercased()
+        guard ext == "sf2" else {
+            throw MIDIPlayerError.soundBankLoadFailed(
+                -10851,
+                "TwinkleSynth native bank loader supports .sf2 SoundFont 2 files (leave blank for built-in TwinkleSynth GM engine)."
             )
         }
-        guard status == noErr else {
-            throw MIDIPlayerError.soundBankLoadFailed(status, resolvedURL.path)
-        }
-        activeSoundBankURL = resolvedURL
+        let bank = try SF2WavetableBank(url: customURL)
+        synthCore.setSoundFontBank(bank)
+        activeSoundBankURL = customURL
+        activeSoundBankDescription = "TwinkleSynth + \(bank.bankName)"
     }
 
     public func installLevelTapIfNeeded() {
@@ -446,8 +461,8 @@ public final class MIDISynthPlayer {
                 }
             }
             let rms = frames > 0 ? sqrt(sumSq / Float(frames * max(1, channels))) : 0
-            if rms > self.peakOutputRMS {
-                self.peakOutputRMS = rms
+            if rms > self.tapPeakRMS {
+                self.tapPeakRMS = rms
             }
         }
         tapInstalled = true
@@ -482,159 +497,52 @@ public final class MIDISynthPlayer {
             }
         }
         self.parsedMIDI = parsed
-        self.eventCursor = 0
-        self.accumulatedOffsetSeconds = 0
-        self.currentPositionSeconds = 0
-        self.activeBPM = parsed.initialBPM
-        self.completedOnce = false
-        self.peakOutputRMS = 0
-        resetMIDIControllers()
+        self.tapPeakRMS = 0.0
+        synthCore.onMIDIEvent = onMIDIEvent
+        synthCore.loadSequence(parsed)
     }
 
     public func play() {
-        guard let parsed = parsedMIDI else { return }
+        guard parsedMIDI != nil else { return }
         if !engine.isRunning { try? engine.start() }
         if isPaused {
             resume()
             return
         }
-        queue.sync {
-            eventCursor = 0
-            accumulatedOffsetSeconds = 0
-            currentPositionSeconds = 0
-            completedOnce = false
-            activeBPM = parsed.initialBPM
-            playStartHostTime = ProcessInfo.processInfo.systemUptime
-            isPlaying = true
-            isPaused = false
-        }
-        resetMIDIControllers()
-        startSchedulerTimer()
+        isPlaying = true
+        isPaused = false
+        synthCore.startPlayback()
     }
 
     public func pause() {
         guard isPlaying, !isPaused else { return }
-        queue.sync {
-            accumulatedOffsetSeconds += ProcessInfo.processInfo.systemUptime - playStartHostTime
-            currentPositionSeconds = accumulatedOffsetSeconds
-            isPaused = true
-            isPlaying = false
-            timer?.cancel()
-            timer = nil
-        }
-        silenceAllNotes()
+        isPaused = true
+        isPlaying = false
+        synthCore.pausePlayback()
     }
 
     public func resume() {
         guard isPaused, parsedMIDI != nil else { return }
         if !engine.isRunning { try? engine.start() }
-        queue.sync {
-            playStartHostTime = ProcessInfo.processInfo.systemUptime
-            isPaused = false
-            isPlaying = true
-        }
-        startSchedulerTimer()
+        isPaused = false
+        isPlaying = true
+        synthCore.resumePlayback()
     }
 
     public func stop() {
-        queue.sync {
-            timer?.cancel()
-            timer = nil
-            isPlaying = false
-            isPaused = false
-            eventCursor = 0
-            accumulatedOffsetSeconds = 0
-            currentPositionSeconds = 0
-            completedOnce = false
-        }
-        silenceAllNotes(resetControllers: true)
+        synthCore.stopPlayback()
+        isPlaying = false
+        isPaused = false
     }
 
     public func resetMIDIControllers() {
-        for ch: UInt8 in 0..<16 {
-            synth.sendController(121, withValue: 0, onChannel: ch) // Reset All Controllers
-            synth.sendController(7, withValue: 100, onChannel: ch) // Channel Volume
-            synth.sendController(10, withValue: 64, onChannel: ch) // Center Pan
-            synth.sendController(11, withValue: 127, onChannel: ch)// Expression
-            synth.sendController(64, withValue: 0, onChannel: ch)  // Sustain Off
-            synth.sendPitchBend(8192, onChannel: ch)
-            synth.sendProgramChange(0, onChannel: ch)
-        }
+        synthCore.resetControllers()
     }
 
-    private func silenceAllNotes(resetControllers: Bool = false) {
-        for ch: UInt8 in 0..<16 {
-            synth.sendController(64, withValue: 0, onChannel: ch)
-            synth.sendController(123, withValue: 0, onChannel: ch) // All Notes Off
-            if resetControllers {
-                synth.sendController(120, withValue: 0, onChannel: ch) // All Sound Off
-            }
-        }
-    }
-
-    private func startSchedulerTimer() {
-        timer?.cancel()
-        let src = DispatchSource.makeTimerSource(queue: queue)
-        src.schedule(deadline: .now(), repeating: .milliseconds(5), leeway: .milliseconds(1))
-        src.setEventHandler { [weak self] in
-            self?.schedulerTick()
-        }
-        timer = src
-        src.resume()
-    }
-
-    private func schedulerTick() {
-        guard isPlaying, !isPaused, let parsed = parsedMIDI else { return }
-        let nowPos = accumulatedOffsetSeconds + (ProcessInfo.processInfo.systemUptime - playStartHostTime)
-        currentPositionSeconds = nowPos
-
-        while eventCursor < parsed.events.count && parsed.events[eventCursor].timeSeconds <= nowPos {
-            let ev = parsed.events[eventCursor]
-            eventCursor += 1
-            dispatchEvent(ev.kind, posSeconds: nowPos)
-        }
-
-        if eventCursor >= parsed.events.count && nowPos >= parsed.durationSeconds && !completedOnce {
-            completedOnce = true
-            isPlaying = false
-            timer?.cancel()
-            timer = nil
-            silenceAllNotes()
-            DispatchQueue.main.async { [weak self] in
-                self?.onCompletion?()
-            }
-        }
-    }
-
-    private func dispatchEvent(_ kind: MIDIMessageKind, posSeconds: Double) {
-        switch kind {
-        case .noteOff(let ch, let note, _):
-            synth.stopNote(note, onChannel: ch)
-            if let cb = onMIDIEvent {
-                let evt = MIDILightEvent(channel: ch, note: note, velocity: 0, isNoteOn: false, currentBPM: activeBPM, positionSeconds: posSeconds)
-                DispatchQueue.main.async { cb(evt) }
-            }
-        case .noteOn(let ch, let note, let vel):
-            synth.startNote(note, withVelocity: vel, onChannel: ch)
-            if let cb = onMIDIEvent {
-                let evt = MIDILightEvent(channel: ch, note: note, velocity: vel, isNoteOn: true, currentBPM: activeBPM, positionSeconds: posSeconds)
-                DispatchQueue.main.async { cb(evt) }
-            }
-        case .polyAftertouch(let ch, let note, let p):
-            MusicDeviceMIDIEvent(synth.audioUnit, 0xA0 | UInt32(ch & 0x0F), UInt32(note & 0x7F), UInt32(p & 0x7F), 0)
-        case .controlChange(let ch, let cc, let val):
-            synth.sendController(cc, withValue: val, onChannel: ch)
-        case .programChange(let ch, let prog):
-            synth.sendProgramChange(prog, onChannel: ch)
-        case .channelAftertouch(let ch, let p):
-            synth.sendPressure(p, onChannel: ch)
-        case .pitchBend(let ch, let val):
-            synth.sendPitchBend(val, onChannel: ch)
-        case .setTempo(let us):
-            if us > 0 {
-                activeBPM = 60_000_000.0 / Double(us)
-            }
-        }
+    /// Deterministic offline stereo PCM render for DSP inspection and headless verification.
+    public func renderOfflineStereoFrames(frameCount: Int, sampleRate: Double = 44100.0) -> (left: [Float], right: [Float], rms: Float) {
+        synthCore.updateSampleRate(sampleRate)
+        return synthCore.renderOfflineStereo(frameCount: frameCount)
     }
 }
 

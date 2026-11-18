@@ -429,7 +429,7 @@ if FileManager.default.fileExists(atPath: silentMid.path), FileManager.default.f
     check(p1?.format == 1 && (p1?.trackCount ?? 0) >= 10 && (p1?.channelsUsed.count ?? 0) >= 3, "Real Format 1 MIDI ('Jingle Bells.mid') parsed multi-track/channel cleanly")
 }
 
-// 6.3 Real GS Wavetable Sound Bank + Live Audible PCM Energy Test (Non-silent render check)
+// 6.3 Native TwinkleSynth GM Polyphonic Synth + Custom SF2 Bank + Live Audible PCM Energy Test
 let synthTest = MIDISynthPlayer()
 synthTest.volume = 0.15 // modest audible verification volume
 do {
@@ -438,6 +438,88 @@ do {
 } catch {
     check(true, "Missing custom soundbank raises explicit error")
 }
+
+// Offline deterministic synthesis test: Sustain Pedal, Pan L/R, Strings, Channel 10 Sleigh Bells & Kick
+let offSynth = TwinkleNativeGMSynth(sampleRate: 44100.0)
+offSynth.masterVolume = 0.65
+offSynth.handleMIDI(.controlChange(channel: 0, controller: 64, value: 127)) // Sustain ON
+offSynth.handleMIDI(.controlChange(channel: 0, controller: 10, value: 0))   // Hard Left Pan
+offSynth.handleMIDI(.programChange(channel: 0, program: 8))                // Celesta
+offSynth.handleMIDI(.noteOn(channel: 0, note: 72, velocity: 110))
+offSynth.handleMIDI(.noteOff(channel: 0, note: 72, velocity: 0))           // Held by Sustain!
+offSynth.handleMIDI(.noteOn(channel: 9, note: 83, velocity: 105))          // Ch10 Sleigh Bells
+let offRenderL = offSynth.renderOfflineStereo(frameCount: 4410)
+let lRMS = sqrtf(offRenderL.left.map { $0 * $0 }.reduce(0, +) / Float(offRenderL.left.count))
+let rRMS = sqrtf(offRenderL.right.map { $0 * $0 }.reduce(0, +) / Float(offRenderL.right.count))
+check(offRenderL.rms > 0.005 && lRMS > rRMS, String(format: "TwinkleNativeGMSynth renders polyphonic Celesta + Sustain + Ch10 Sleigh Bells (RMS=%.4f, L>R pan=%.4f>%.4f)", offRenderL.rms, lRMS, rRMS))
+
+// Custom .sf2 RIFF bank parser test (synthetic minimal RIFF sfbk fixture -> PCM wavetable lookup)
+func buildMinimalTestSF2() -> Data {
+    var out = Data("RIFF".utf8)
+    func u16(_ v: UInt16) -> [UInt8] { [UInt8(v & 0xFF), UInt8((v >> 8) & 0xFF)] }
+    func u32(_ v: UInt32) -> [UInt8] { [UInt8(v & 0xFF), UInt8((v >> 8) & 0xFF), UInt8((v >> 16) & 0xFF), UInt8((v >> 24) & 0xFF)] }
+    func chunk(_ id: String, _ payload: Data) -> Data {
+        var c = Data(id.utf8)
+        c.append(contentsOf: u32(UInt32(payload.count)))
+        c.append(payload)
+        if payload.count & 1 == 1 { c.append(0) }
+        return c
+    }
+    func padName(_ s: String, len: Int) -> Data {
+        var b = Array(s.utf8.prefix(len))
+        while b.count < len { b.append(0) }
+        return Data(b)
+    }
+
+    var smplData = Data()
+    for i in 0..<256 {
+        let s = Int16(sin(Double(i) * .pi * 2.0 / 32.0) * 16000.0)
+        smplData.append(contentsOf: u16(UInt16(bitPattern: s)))
+    }
+    let sdtaList = Data("LIST".utf8) + Data(u32(UInt32(4 + chunk("smpl", smplData).count))) + Data("sdta".utf8) + chunk("smpl", smplData)
+
+    var phdr = Data()
+    phdr.append(padName("PianoSF2", len: 20)); phdr.append(contentsOf: u16(0)); phdr.append(contentsOf: u16(0)); phdr.append(contentsOf: u16(0)); phdr.append(Data(repeating: 0, count: 12))
+    phdr.append(padName("EOP", len: 20)); phdr.append(contentsOf: u16(255)); phdr.append(contentsOf: u16(255)); phdr.append(contentsOf: u16(1)); phdr.append(Data(repeating: 0, count: 12))
+
+    var pbag = Data(); pbag.append(contentsOf: u16(0) + u16(0)); pbag.append(contentsOf: u16(1) + u16(0))
+    var pgen = Data(); pgen.append(contentsOf: u16(41) + u16(0))
+
+    var inst = Data()
+    inst.append(padName("Inst0", len: 20)); inst.append(contentsOf: u16(0))
+    inst.append(padName("EOI", len: 20)); inst.append(contentsOf: u16(1))
+
+    var ibag = Data(); ibag.append(contentsOf: u16(0) + u16(0)); ibag.append(contentsOf: u16(1) + u16(0))
+    var igen = Data(); igen.append(contentsOf: u16(53) + u16(0))
+
+    var shdr = Data()
+    shdr.append(padName("Sine256", len: 20))
+    shdr.append(contentsOf: u32(0) + u32(256) + u32(0) + u32(256) + u32(44100))
+    shdr.append(contentsOf: [60, 0])
+    shdr.append(contentsOf: u16(0) + u16(1))
+    shdr.append(padName("EOS", len: 20)); shdr.append(Data(repeating: 0, count: 26))
+
+    let pdtaBody = Data("pdta".utf8) + chunk("phdr", phdr) + chunk("pbag", pbag) + chunk("pgen", pgen) + chunk("inst", inst) + chunk("ibag", ibag) + chunk("igen", igen) + chunk("shdr", shdr)
+    let pdtaList = Data("LIST".utf8) + Data(u32(UInt32(pdtaBody.count))) + pdtaBody
+    let infoList = Data("LIST".utf8) + Data(u32(4)) + Data("INFO".utf8)
+
+    let totalBody = Data("sfbk".utf8) + infoList + sdtaList + pdtaList
+    out.append(contentsOf: u32(UInt32(totalBody.count)))
+    out.append(totalBody)
+    return out
+}
+
+let tmpSF2 = scratchDir.appendingPathComponent("test_custom.sf2")
+try? buildMinimalTestSF2().write(to: tmpSF2)
+do {
+    _ = try synthTest.load(data: smfBytes, customSoundBankPath: tmpSF2.path)
+    let sf2LoadedOK = synthTest.activeSoundBankURL == tmpSF2 && synthTest.activeSoundBankDescription.contains("test_custom")
+    let sf2Out = synthTest.renderOfflineStereoFrames(frameCount: 2205)
+    check(sf2LoadedOK && sf2Out.left.count == 2205, "Custom RIFF .sf2 SoundFont parses & maps wavetable natively")
+} catch {
+    check(false, "Custom .sf2 load threw unexpectedly: \(error)")
+}
+try? FileManager.default.removeItem(at: tmpSF2)
 
 do {
     _ = try synthTest.load(data: smfBytes, customSoundBankPath: nil)
@@ -451,10 +533,10 @@ do {
     RunLoop.current.run(until: Date().addingTimeInterval(0.25))
     let rms = synthTest.peakOutputRMS
     synthTest.stop()
-    check(pausedOK && resumedOK, "MIDISynthPlayer pause() & resume() transition cleanly")
-    check(rms > 0.0005, String(format: "MIDISynth + gs_instruments.dls rendered audible PCM signal (RMS=%.5f)", rms))
+    check(pausedOK && resumedOK && synthTest.activeSoundBankURL == nil, "Native MIDISynthPlayer pause() & resume() transition cleanly without Apple synth")
+    check(rms > 0.0005, String(format: "Native TwinkleSynth MIDI Player rendered live audible PCM signal (RMS=%.5f)", rms))
 } catch {
-    check(false, "MIDISynth GS bank live test failed: \(error)")
+    check(false, "Native TwinkleSynth live test failed: \(error)")
 }
 
 // 6.4 Programmable Jukebox Folder Discovery, Repeat Modes, ScreenSaver Music & Backward Compat

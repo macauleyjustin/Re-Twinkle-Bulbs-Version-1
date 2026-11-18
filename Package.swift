@@ -13,7 +13,7 @@ let package = Package(
         .target(
             name: "TwinkleBulbsCore",
             path: "TwinkleBulbs",
-            exclude: ["Info.plist", "main.swift"],
+            exclude: ["Info.plist", "main.swift", "TwinkleBulbs.entitlements"],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .executableTarget(

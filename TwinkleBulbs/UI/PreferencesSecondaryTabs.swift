@@ -10,7 +10,7 @@ final class PreferencesSecondaryTabsCoordinator: NSObject {
     private let musicTrackDelayField = NSTextField()
     private let musicVolumeSlider = NSSlider(value: 0.85, minValue: 0.0, maxValue: 1.0, target: nil, action: nil)
     private let musicDirField = NSTextField()
-    private let soundBankLabel = NSTextField(labelWithString: "Sound Bank: Built-in GS Wavetable")
+    private let soundBankLabel = NSTextField(labelWithString: "MIDI Synth: Built-in TwinkleSynth GM (64-Voice DSP)")
     private let musicOnlySSCheck = NSButton(checkboxWithTitle: "Play Music Only During Screen Saver", target: nil, action: nil)
     private let musicPauseCheck = NSButton(checkboxWithTitle: "Auto-Pause After (min):", target: nil, action: nil)
     private let musicPauseField = NSTextField()
@@ -22,7 +22,7 @@ final class PreferencesSecondaryTabsCoordinator: NSObject {
     private let ssDelayField = NSTextField()
     private let ssModulePopup = NSPopUpButton()
     private let ssLightsCheck = NSButton(checkboxWithTitle: "Show Twinkle Bulbs Around Screen Saver", target: nil, action: nil)
-    private let ssLogoCheck = NSButton(checkboxWithTitle: "Show Twinkle Bulbs 6.0 Watermark", target: nil, action: nil)
+    private let ssLogoCheck = NSButton(checkboxWithTitle: "Show Re: Twinkle Bulbs Watermark", target: nil, action: nil)
     private let ssEnableMsgCheck = NSButton(checkboxWithTitle: "Display Message:", target: nil, action: nil)
     private let ssMsgField = NSTextField()
     private let ssMsgColorWell = NSColorWell()
@@ -130,9 +130,9 @@ final class PreferencesSecondaryTabsCoordinator: NSObject {
         musicPauseField.frame = NSRect(x: 534, y: 116, width: 52, height: 22)
 
         soundBankLabel.frame = NSRect(x: 16, y: 74, width: 390, height: 18)
-        let bankBtn = NSButton(title: "Select .SF2 / .DLS...", target: self, action: #selector(chooseSoundBank))
+        let bankBtn = NSButton(title: "Custom .SF2 Bank...", target: self, action: #selector(chooseSoundBank))
         bankBtn.frame = NSRect(x: 416, y: 70, width: 148, height: 26)
-        let resetBankBtn = NSButton(title: "Use GS Default", target: self, action: #selector(resetSoundBank))
+        let resetBankBtn = NSButton(title: "Built-In Synth", target: self, action: #selector(resetSoundBank))
         resetBankBtn.frame = NSRect(x: 570, y: 70, width: 100, height: 26)
 
         nowPlayingLbl.frame = NSRect(x: 16, y: 20, width: 640, height: 34)
@@ -355,21 +355,21 @@ final class PreferencesSecondaryTabsCoordinator: NSObject {
         tv.isEditable = false
         tv.font = .systemFont(ofSize: 12)
         tv.string = """
-        TWINKLE BULBS 6.0 — COMPLETE HOLIDAY EDITION FOR MACOS
+        RE: TWINKLE BULBS v1.0.6 — COMPLETE HOLIDAY EDITION FOR MACOS
 
         1. CLASSIC v6.0 ENGINE & BULB LIBRARY (265 Sets Total):
-           • 15 Original Classic clean-room sets + 250 Complete Holiday Edition sets across 25 themed collections (1..25).
+           • 15 Original Classic sets + 250 Complete Holiday Edition sets across 25 themed collections (1..25).
            • 9 Authentic Flashing Modes (None, Random, All Together, Chase, Alternating, Some Flash, Single, Pairs, Ping-Pong) & 21 Color Modes with exact 50 ms timing & 1200–80 ms speeds.
            • Optional Modern Effects (15 patterns: Twinklefox, Meteor, Candle Flicker, Fireworks, Candy Cane, Auto-Cycle, MIDI-Reactive) toggled separately on Bulbs → Flashing without touching classic settings.
 
         2. SEASONAL SCREEN SAVERS (25 Total Modules):
-           • 4 Classic modules (Blank Screen, Clock, Fireworks, Snowfall), CD Wallpaper Slideshow, + 20 New Seasonal Screen Savers (Christmas Wreath, Tree Glow, Village, Fireplace, Frost, Gingerbread, Autumn Leaves, Glowing Pumpkin, Haunted House, Autumn Forest, Pumpkin Patch, Spring Blossoms, Rain, Easter Garden, Fireflies, Night Sky, Beach Sunset, Valentine's Hearts, New Year's Celebration, Patriotic Celebration).
+           • 4 Classic modules (Blank Screen, Clock, Fireworks, Snowfall), Wallpaper Slideshow, + 20 Seasonal Screen Savers (Christmas Wreath, Tree Glow, Village, Fireplace, Frost, Gingerbread, Autumn Leaves, Glowing Pumpkin, Haunted House, Autumn Forest, Pumpkin Patch, Spring Blossoms, Rain, Easter Garden, Fireflies, Night Sky, Beach Sunset, Valentine's Hearts, New Year's Celebration, Patriotic Celebration).
            • Programmer Extensibility: Implement TwinkleScreenSaverPlugin and register with ScreenSaverPluginRegistry.shared cleanly in Swift (no integrated Bulb Set Builder is included).
 
-        3. PROGRAMMABLE MIDI JUKEBOX & SOUND BANKS:
-           • 105 Clean-Room Multi-Track Format-1 General MIDI seasonal arrangements paired with macOS Roland GS Wavetable synthesis (gs_instruments.dls) or custom user .SF2/.DLS banks, plus folder discovery for .mid, .midi, .rmi, .mp3, .wav, .aiff, .m4a.
+        3. PROGRAMMABLE MIDI JUKEBOX & NATIVE TWINKLESYNTH ENGINE:
+           • 105 Multi-Track Format-1 General MIDI seasonal arrangements powered by Twinkle Bulbs' own self-contained 64-voice General MIDI software synthesizer + hall reverb (or custom .SF2 wavetable banks), plus folder discovery for .mid, .midi, .rmi, .mp3, .wav, .aiff, .m4a.
 
-        4. COMMERCIAL CD FEATURES:
+        4. COMPLETE HOLIDAY FEATURES:
            • 24-Door Interactive Christmas Advent Calendar (Calendar tab), 130 Seasonal Wallpapers (Wallpaper tab with Favorites & Per-Monitor apply), and external .blb / .icl / .ico / standard-compressed .blz bulb import (~/Library/Application Support/TwinkleBulbs/ImportedBulbs/).
         """
         scroll.documentView = tv
@@ -392,8 +392,8 @@ final class PreferencesSecondaryTabsCoordinator: NSObject {
         musicTrackDelayField.doubleValue = s.musicTrackDelaySeconds
         musicVolumeSlider.doubleValue = s.musicVolume
         musicDirField.stringValue = s.musicDirectoryPath
-        let bankName = s.customSoundBankPath.isEmpty ? "Built-in GS Wavetable (gs_instruments.dls)" : (s.customSoundBankPath as NSString).lastPathComponent
-        soundBankLabel.stringValue = "Sound Bank: \(bankName)"
+        let bankName = s.customSoundBankPath.isEmpty ? "Built-in TwinkleSynth GM (64-Voice DSP)" : (s.customSoundBankPath as NSString).lastPathComponent
+        soundBankLabel.stringValue = "MIDI Synth: \(bankName)"
         musicOnlySSCheck.state = s.ssMusic ? .on : .off
         musicPauseCheck.state = s.enablePause ? .on : .off
         musicPauseField.integerValue = s.pauseMinutes
@@ -612,19 +612,19 @@ final class PreferencesSecondaryTabsCoordinator: NSObject {
 
     @objc private func chooseSoundBank() {
         let panel = NSOpenPanel()
-        panel.title = "Choose General MIDI Sound Bank (.sf2 or .dls)"
+        panel.title = "Choose Optional .SF2 SoundFont Bank"
         panel.canChooseFiles = true
         panel.allowsMultipleSelection = false
         if panel.runModal() == .OK, let bankURL = panel.url {
             owner.draft.customSoundBankPath = bankURL.path
-            soundBankLabel.stringValue = "Sound Bank: \(bankURL.lastPathComponent)"
+            soundBankLabel.stringValue = "MIDI Synth: \(bankURL.lastPathComponent)"
             AudioEngineService.shared.playEffect(.softTick, enabled: owner.draft.soundFX)
         }
     }
 
     @objc private func resetSoundBank() {
         owner.draft.customSoundBankPath = ""
-        soundBankLabel.stringValue = "Sound Bank: Built-in GS Wavetable (gs_instruments.dls)"
+        soundBankLabel.stringValue = "MIDI Synth: Built-in TwinkleSynth GM (64-Voice DSP)"
     }
 
     @objc private func importMusicFiles() {

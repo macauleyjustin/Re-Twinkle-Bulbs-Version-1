@@ -32,7 +32,7 @@ final class StatusBarController: NSObject {
         button.target = self
         button.action = #selector(handleClick(_:))
         button.sendAction(on: [.leftMouseUp, .rightMouseUp, .otherMouseUp])
-        button.toolTip = "Twinkle Bulbs 6.0"
+        button.toolTip = "Re: Twinkle Bulbs"
     }
 
     func updateIcon(lit: Bool, settings: AppSettings) {
@@ -44,7 +44,7 @@ final class StatusBarController: NSObject {
     func rebuildMenu(settings: AppSettings) {
         menu.removeAllItems()
 
-        let titleItem = NSMenuItem(title: "Twinkle Bulbs 6.0", action: nil, keyEquivalent: "")
+        let titleItem = NSMenuItem(title: "Re: Twinkle Bulbs v1.0.6", action: nil, keyEquivalent: "")
         titleItem.isEnabled = false
         menu.addItem(titleItem)
 
@@ -116,13 +116,13 @@ final class StatusBarController: NSObject {
         advItem.target = self
         menu.addItem(advItem)
 
-        let aboutItem = NSMenuItem(title: "About Twinkle Bulbs...", action: #selector(menuOpenAbout), keyEquivalent: "")
+        let aboutItem = NSMenuItem(title: "About Re: Twinkle Bulbs...", action: #selector(menuOpenAbout), keyEquivalent: "")
         aboutItem.target = self
         menu.addItem(aboutItem)
 
         menu.addItem(.separator())
 
-        let exitItem = NSMenuItem(title: "Exit Twinkle Bulbs", action: #selector(menuExit), keyEquivalent: "")
+        let exitItem = NSMenuItem(title: "Exit Re: Twinkle Bulbs", action: #selector(menuExit), keyEquivalent: "")
         exitItem.target = self
         menu.addItem(exitItem)
     }
