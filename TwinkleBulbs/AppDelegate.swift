@@ -11,6 +11,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     private lazy var tipsController = TipOfTheDayWindowController()
     private lazy var aboutController = AboutWindowController()
     private lazy var calendarController = CalendarViewerController()
+    private lazy var adventController = AdventCalendarWindowController()
     private var wallpaperRotationTimer: Timer?
 
     public override init() { super.init() }
@@ -37,9 +38,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         status.onOpenSettings = { [weak self] in self?.openSettings() }
         status.onToggleLights = { [weak self] in self?.toggleLights() }
         status.onToggleMusic = { [weak self] in self?.toggleMusic() }
+        status.onTogglePauseMusic = { [weak self] in self?.togglePauseMusic() }
+        status.onPreviousMusic = { [weak self] in self?.previousMusic() }
         status.onNextMusic = { [weak self] in self?.nextMusic() }
         status.onStartScreenSaver = { [weak self] in self?.startScreenSaver() }
         status.onOpenCalendar = { [weak self] in self?.openCalendar() }
+        status.onOpenAdventCalendar = { [weak self] in self?.openAdventCalendar() }
         status.onOpenTips = { [weak self] in self?.openTips() }
         status.onOpenAbout = { [weak self] in self?.openAbout() }
         status.onToggleQuickAccess = { [weak self] in self?.toggleQuickAccess() }
@@ -50,6 +54,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         overlayController.onTraySyncTick = { [weak self] isLit in
             guard let self else { return }
             self.statusBarController?.updateIcon(lit: isLit, settings: self.settingsStore.settings)
+        }
+        AudioEngineService.shared.onMIDINoteEvent = { [weak self] evt in
+            self?.overlayController.handleMIDIEvent(evt)
         }
 
         screenSaverController.onActiveStateChanged = { [weak self] active in
@@ -67,9 +74,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         prefsController.onOpenCalendarViewer = { [weak self] in
             self?.openCalendar()
         }
+        prefsController.onOpenAdventCalendar = { [weak self] in
+            self?.openAdventCalendar()
+        }
 
         quickAccessController.onOpenSettings = { [weak self] in self?.openSettings() }
         quickAccessController.onStartSaver = { [weak self] in self?.startScreenSaver() }
+        quickAccessController.onSettingsChanged = { [weak self] s in self?.applyAllSettings(s) }
 
         // Apply active configuration
         applyAllSettings(current)
@@ -191,6 +202,20 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         quickAccessController.refresh()
     }
 
+    private func togglePauseMusic() {
+        let s = settingsStore.settings
+        AudioEngineService.shared.togglePause(settings: s)
+        statusBarController?.rebuildMenu(settings: s)
+        quickAccessController.refresh()
+    }
+
+    private func previousMusic() {
+        let s = settingsStore.settings
+        AudioEngineService.shared.playPrevious(settings: s)
+        statusBarController?.rebuildMenu(settings: s)
+        quickAccessController.refresh()
+    }
+
     private func nextMusic() {
         let s = settingsStore.settings
         AudioEngineService.shared.playNext(settings: s)
@@ -205,6 +230,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     private func openCalendar() {
         calendarController.refresh()
         calendarController.showWindow(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func openAdventCalendar() {
+        adventController.refresh()
+        adventController.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 

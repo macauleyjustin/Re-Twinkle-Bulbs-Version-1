@@ -49,6 +49,7 @@ public final class ScreenSaverCanvasView: NSView {
     private var windOffset: CGFloat = 0
     private var snowDriftHeights: [CGFloat] = []
     private var santaX: CGFloat = -160
+    private let seasonalRenderer = SeasonalScreenSaverRenderer()
 
     public init(frame: NSRect, settings: AppSettings, preview: Bool = false) {
         self.settings = settings
@@ -96,6 +97,12 @@ public final class ScreenSaverCanvasView: NSView {
         particles.removeAll()
         santaX = -160
         clockPos = CGPoint(x: w * 0.25, y: h * 0.35)
+        if !settings.ssModule.isClassicModule {
+            seasonalRenderer.reset(module: settings.ssModule, bounds: contentRect(), settings: settings, preview: isPreviewMode)
+            if let plugin = ScreenSaverPluginRegistry.shared.plugin(for: settings.ssModule.rawValue) {
+                plugin.reset(in: contentRect(), settings: settings, preview: isPreviewMode)
+            }
+        }
     }
 
     /// 50ms animation tick (20 FPS matching SS_GetTimerInterval() == 0 -> 50ms default in tbulbs.mem @ 0x0046ddd0)
@@ -129,6 +136,12 @@ public final class ScreenSaverCanvasView: NSView {
 
         case .snowfall:
             stepSnowfall(inset: inset)
+
+        default:
+            seasonalRenderer.step(module: settings.ssModule, inset: inset, settings: settings, preview: isPreviewMode, tick: tickCount)
+            if let plugin = ScreenSaverPluginRegistry.shared.plugin(for: settings.ssModule.rawValue) {
+                plugin.step(in: inset, settings: settings, tick: tickCount)
+            }
         }
 
         if settings.ssEnableMsg && settings.ssScrollMsg {
@@ -298,6 +311,8 @@ public final class ScreenSaverCanvasView: NSView {
             if let g = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: cols, locations: [0, 1]) {
                 ctx.drawLinearGradient(g, start: .zero, end: CGPoint(x: 0, y: bounds.height), options: [])
             }
+        default:
+            seasonalRenderer.drawBackground(module: settings.ssModule, in: ctx, bounds: bounds, settings: settings)
         }
 
         let inset = contentRect()
@@ -313,6 +328,12 @@ public final class ScreenSaverCanvasView: NSView {
             drawFireworks(in: ctx, inset: inset)
         case .snowfall:
             drawSnowfall(in: ctx, inset: inset)
+        default:
+            if let plugin = ScreenSaverPluginRegistry.shared.plugin(for: settings.ssModule.rawValue) {
+                plugin.draw(in: ctx, rect: inset, settings: settings, preview: isPreviewMode, tick: tickCount)
+            } else {
+                seasonalRenderer.drawForeground(module: settings.ssModule, in: ctx, inset: inset, settings: settings, preview: isPreviewMode, tick: tickCount)
+            }
         }
 
         // Scrolling message inside viewport

@@ -4,14 +4,15 @@ import AVFoundation
 public struct MusicTrack: Identifiable, Equatable {
     public let id: String
     public let title: String
-    public let url: URL? // nil => built-in synthesized public-domain carol
-    public let builtInNotes: [(midi: UInt8, beats: Double)]?
+    public let url: URL? // nil => clean-room multi-track GM built-in MIDI arrangement
+    public let builtInMIDI: Data?
     public let tempoBPM: Double
 
     public static func == (lhs: MusicTrack, rhs: MusicTrack) -> Bool { lhs.id == rhs.id }
 }
 
-/// Clean-room audio service handling UI sound effects (wave_165..388 equivalents) and festive background music.
+/// Clean-room audio service handling UI sound effects (wave_165..388 equivalents)
+/// and the restored Twinkle Bulbs programmable MIDI / MP3 / WAV jukebox.
 public final class AudioEngineService: NSObject, ObservableObject, AVAudioPlayerDelegate {
     public static let shared = AudioEngineService()
 
@@ -24,22 +25,34 @@ public final class AudioEngineService: NSObject, ObservableObject, AVAudioPlayer
         case celebrate = 12 // wave_388 (307ms)
     }
 
+    public static let supportedExtensions: Set<String> = ["mid", "midi", "rmi", "wav", "mp3", "m4a", "aiff", "aac", "caf"]
+    public static let midiExtensions: Set<String> = ["mid", "midi", "rmi"]
+
     @Published public private(set) var tracks: [MusicTrack] = []
     @Published public private(set) var isPlaying: Bool = false
+    @Published public private(set) var isPaused: Bool = false
     @Published public private(set) var currentTrackTitle: String = "Stopped"
+    @Published public private(set) var currentTrackFormatInfo: String = ""
     @Published public private(set) var currentTrackIndex: Int = 0
+    @Published public private(set) var lastErrorMessage: String? = nil
+
+    public let midiSynth = MIDISynthPlayer()
+    public var onMIDINoteEvent: ((MIDILightEvent) -> Void)? {
+        didSet {
+            midiSynth.onMIDIEvent = onMIDINoteEvent
+        }
+    }
 
     private var sfxPlayers: [Int: AVAudioPlayer] = [:]
     private var musicAudioPlayer: AVAudioPlayer?
-    private var midiPlayer: AVMIDIPlayer?
-    private var synthTimer: Timer?
-    private var synthStep: Int = 0
     private var pauseTimer: Timer?
+    private var interTrackDelayWorkItem: DispatchWorkItem?
+    private var playHistory: [Int] = []
+    private var shufflePlayedIDs: Set<String> = []
+    private var activeCustomDirectory: String = ""
+    private var consecutiveFailures: Int = 0
 
-    private var synthEngine: AVAudioEngine?
-    private var synthSampler: AVAudioUnitSampler?
-
-    static var importedMusicDirectory: URL {
+    public static var importedMusicDirectory: URL {
         let appSup = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         return appSup.appendingPathComponent("TwinkleBulbs/ImportedMusic", isDirectory: true)
     }
@@ -47,32 +60,70 @@ public final class AudioEngineService: NSObject, ObservableObject, AVAudioPlayer
     override init() {
         super.init()
         try? FileManager.default.createDirectory(at: Self.importedMusicDirectory, withIntermediateDirectories: true)
-        rebuildTrackList()
+        midiSynth.onCompletion = { [weak self] in
+            guard let self else { return }
+            self.handleTrackCompleted(settings: SettingsStore.shared.settings)
+        }
+        rebuildTrackList(musicDirectoryPath: SettingsStore.shared.settings.musicDirectoryPath)
         prepareSFXCache()
     }
 
-    func rebuildTrackList() {
-        var list = Self.builtInCarols()
-        if let files = try? FileManager.default.contentsOfDirectory(at: Self.importedMusicDirectory, includingPropertiesForKeys: nil) {
-            let exts = Set(["mid", "midi", "wav", "mp3", "m4a", "aiff"])
-            for f in files.sorted(by: { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }) {
-                if exts.contains(f.pathExtension.lowercased()) {
-                    list.append(MusicTrack(
-                        id: "imported:\(f.lastPathComponent)",
-                        title: f.deletingPathExtension().lastPathComponent,
-                        url: f,
-                        builtInNotes: nil,
-                        tempoBPM: 120
-                    ))
-                }
+    public func rebuildTrackList(musicDirectoryPath: String? = nil) {
+        let dirPath = musicDirectoryPath ?? SettingsStore.shared.settings.musicDirectoryPath
+        activeCustomDirectory = dirPath
+        var list: [MusicTrack] = []
+        var seenPaths = Set<String>()
+
+        func scanDirectory(_ dirURL: URL, sourceTag: String, recursive: Bool) {
+            let fm = FileManager.default
+            var isDir: ObjCBool = false
+            guard fm.fileExists(atPath: dirURL.path, isDirectory: &isDir), isDir.boolValue else { return }
+
+            let candidates: [URL]
+            if recursive, let enumerator = fm.enumerator(
+                at: dirURL,
+                includingPropertiesForKeys: [.isRegularFileKey],
+                options: [.skipsHiddenFiles]
+            ) {
+                candidates = enumerator.compactMap { $0 as? URL }
+            } else {
+                candidates = (try? fm.contentsOfDirectory(at: dirURL, includingPropertiesForKeys: nil)) ?? []
+            }
+
+            for f in candidates.sorted(by: { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }) {
+                let ext = f.pathExtension.lowercased()
+                guard Self.supportedExtensions.contains(ext) else { continue }
+                let canonical = f.resolvingSymlinksInPath().standardizedFileURL.path
+                guard !seenPaths.contains(canonical) else { continue }
+                seenPaths.insert(canonical)
+                list.append(MusicTrack(
+                    id: "\(sourceTag):\(canonical)",
+                    title: f.deletingPathExtension().lastPathComponent,
+                    url: f,
+                    builtInMIDI: nil,
+                    tempoBPM: 120
+                ))
             }
         }
+
+        // User-selected music folder (prioritized when configured) + ImportedMusic folder
+        let trimmedFolder = dirPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedFolder.isEmpty {
+            scanDirectory(URL(fileURLWithPath: trimmedFolder), sourceTag: "folder", recursive: true)
+        }
+        scanDirectory(Self.importedMusicDirectory, sourceTag: "imported", recursive: false)
+
+        // Built-in multi-track, multi-channel GM carol arrangements
+        list.append(contentsOf: Self.builtInCarols())
         tracks = list
+        if currentTrackIndex >= tracks.count {
+            currentTrackIndex = 0
+        }
     }
 
     // MARK: - UI Sound Effects (synthesized WAVs cleanly matching v6.0 SFX durations/characters)
 
-    func playEffect(_ effect: UIEffect, enabled: Bool) {
+    public func playEffect(_ effect: UIEffect, enabled: Bool) {
         guard enabled else { return }
         if let player = sfxPlayers[effect.rawValue] {
             player.currentTime = 0
@@ -139,97 +190,233 @@ public final class AudioEngineService: NSObject, ObservableObject, AVAudioPlayer
         return out
     }
 
-    // MARK: - Holiday Music Playback
+    // MARK: - Holiday Music Jukebox Control
 
-    func syncWithSettings(_ settings: AppSettings, isScreenSaverActive: Bool) {
+    public func syncWithSettings(_ settings: AppSettings, isScreenSaverActive: Bool) {
+        if settings.musicDirectoryPath != activeCustomDirectory {
+            rebuildTrackList(musicDirectoryPath: settings.musicDirectoryPath)
+        }
+        setVolume(settings.musicVolume)
+
         let shouldPlay = settings.musicEnabled && (!settings.ssMusic || isScreenSaverActive)
-        if shouldPlay && !isPlaying {
+        if shouldPlay && !isPlaying && !isPaused {
+            if settings.resetMusic {
+                playHistory.removeAll()
+                shufflePlayedIDs.removeAll()
+            }
             play(settings: settings)
-        } else if !shouldPlay && isPlaying {
+        } else if !shouldPlay && (isPlaying || isPaused) {
             stop()
         }
     }
 
-    func play(trackIndex: Int? = nil, settings: AppSettings) {
+    public func setVolume(_ volume: Double) {
+        let clamped = max(0.0, min(1.0, volume))
+        midiSynth.volume = clamped
+        musicAudioPlayer?.volume = Float(clamped)
+    }
+
+    public func play(trackIndex: Int? = nil, settings: AppSettings, recordHistory: Bool = true) {
+        cancelInterTrackDelay()
         stopPlaybackOnly()
+
         let pool = activeTrackIndices(settings: settings)
-        guard !pool.isEmpty else { return }
+        guard !pool.isEmpty else {
+            lastErrorMessage = "No music tracks available."
+            isPlaying = false
+            isPaused = false
+            return
+        }
 
+        let chosenIndex: Int
         if let explicit = trackIndex, explicit >= 0, explicit < tracks.count {
-            currentTrackIndex = explicit
+            chosenIndex = explicit
         } else if settings.musicPlayMode == 1 {
-            currentTrackIndex = pool.randomElement() ?? 0
-        } else if !pool.contains(currentTrackIndex) {
-            currentTrackIndex = pool[0]
-        }
-
-        let track = tracks[currentTrackIndex]
-        currentTrackTitle = track.title
-        isPlaying = true
-
-        if let url = track.url {
-            if ["mid", "midi"].contains(url.pathExtension.lowercased()) {
-                do {
-                    midiPlayer = try AVMIDIPlayer(contentsOf: url, soundBankURL: nil)
-                    midiPlayer?.prepareToPlay()
-                    midiPlayer?.play { [weak self] in
-                        DispatchQueue.main.async {
-                            self?.handleTrackCompleted(settings: settings)
-                        }
-                    }
-                } catch {
-                    playBuiltInCarolFallback(track, settings: settings)
-                }
-            } else {
-                musicAudioPlayer = try? AVAudioPlayer(contentsOf: url)
-                musicAudioPlayer?.delegate = self
-                musicAudioPlayer?.play()
-            }
+            let unplayed = pool.filter { !shufflePlayedIDs.contains(tracks[$0].id) }
+            let source = unplayed.isEmpty ? pool : unplayed
+            chosenIndex = source.randomElement() ?? pool[0]
+        } else if pool.contains(currentTrackIndex) {
+            chosenIndex = currentTrackIndex
         } else {
-            playBuiltInCarolFallback(track, settings: settings)
+            chosenIndex = pool[0]
         }
 
+        if recordHistory && (!playHistory.isEmpty || isPlaying) && playHistory.last != chosenIndex {
+            playHistory.append(chosenIndex)
+            if playHistory.count > 100 { playHistory.removeFirst() }
+        } else if playHistory.isEmpty {
+            playHistory.append(chosenIndex)
+        }
+
+        currentTrackIndex = chosenIndex
+        let track = tracks[currentTrackIndex]
+        shufflePlayedIDs.insert(track.id)
+        lastErrorMessage = nil
+        midiSynth.volume = settings.musicVolume
+
+        do {
+            if let url = track.url {
+                let ext = url.pathExtension.lowercased()
+                guard FileManager.default.isReadableFile(atPath: url.path) else {
+                    throw NSError(domain: "TwinkleBulbsAudio", code: 404, userInfo: [NSLocalizedDescriptionKey: "Missing or unreadable file: \(url.lastPathComponent)"])
+                }
+                if Self.midiExtensions.contains(ext) {
+                    let parsed = try midiSynth.load(url: url, customSoundBankPath: settings.customSoundBankPath)
+                    midiSynth.onMIDIEvent = onMIDINoteEvent
+                    midiSynth.play()
+                    currentTrackTitle = track.title
+                    let chCount = parsed.channelsUsed.count
+                    currentTrackFormatInfo = "SMF Type \(parsed.format) • \(parsed.trackCount) tracks • \(chCount) ch\(parsed.hasPercussion ? " + Drums" : "")"
+                } else {
+                    let player = try AVAudioPlayer(contentsOf: url)
+                    player.delegate = self
+                    player.volume = Float(max(0.0, min(1.0, settings.musicVolume)))
+                    guard player.play() else {
+                        throw NSError(domain: "TwinkleBulbsAudio", code: 500, userInfo: [NSLocalizedDescriptionKey: "Failed to start audio playback for \(url.lastPathComponent)"])
+                    }
+                    musicAudioPlayer = player
+                    currentTrackTitle = track.title
+                    currentTrackFormatInfo = "\(ext.uppercased()) • \(Int(round(player.duration)))s"
+                }
+            } else if let midiData = track.builtInMIDI {
+                let parsed = try midiSynth.load(data: midiData, customSoundBankPath: settings.customSoundBankPath)
+                midiSynth.onMIDIEvent = onMIDINoteEvent
+                midiSynth.play()
+                currentTrackTitle = track.title
+                currentTrackFormatInfo = "GM Multi-Track (\(parsed.channelsUsed.count) ch + Sleigh Bells)"
+            } else {
+                throw NSError(domain: "TwinkleBulbsAudio", code: 400, userInfo: [NSLocalizedDescriptionKey: "Track has neither URL nor MIDI data."])
+            }
+
+            isPlaying = true
+            isPaused = false
+            consecutiveFailures = 0
+            schedulePauseTimerIfNeeded(settings: settings)
+        } catch {
+            lastErrorMessage = "\(track.title): \(error.localizedDescription)"
+            isPlaying = false
+            isPaused = false
+            currentTrackTitle = "Error: \(track.title)"
+            currentTrackFormatInfo = error.localizedDescription
+            consecutiveFailures += 1
+            if consecutiveFailures < min(3, pool.count) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+                    self?.playNext(settings: settings)
+                }
+            }
+        }
+    }
+
+    public func pause() {
+        guard isPlaying, !isPaused else { return }
+        if midiSynth.isPlaying {
+            midiSynth.pause()
+        }
+        if let ap = musicAudioPlayer, ap.isPlaying {
+            ap.pause()
+        }
+        isPlaying = false
+        isPaused = true
+        currentTrackFormatInfo = "Paused"
+    }
+
+    public func resume(settings: AppSettings) {
+        guard isPaused else {
+            if !isPlaying { play(settings: settings) }
+            return
+        }
+        setVolume(settings.musicVolume)
+        if midiSynth.isPaused {
+            midiSynth.resume()
+        } else if let ap = musicAudioPlayer {
+            ap.play()
+        }
+        isPlaying = true
+        isPaused = false
+        currentTrackFormatInfo = "Resumed"
         schedulePauseTimerIfNeeded(settings: settings)
     }
 
-    func playNext(settings: AppSettings) {
+    public func togglePause(settings: AppSettings) {
+        if isPlaying {
+            pause()
+        } else if isPaused {
+            resume(settings: settings)
+        } else {
+            play(settings: settings)
+        }
+    }
+
+    public func restartTrack(settings: AppSettings) {
+        play(trackIndex: currentTrackIndex, settings: settings, recordHistory: false)
+    }
+
+    public func playNext(settings: AppSettings) {
         let pool = activeTrackIndices(settings: settings)
         guard !pool.isEmpty else { return }
         if settings.musicPlayMode == 1 {
-            currentTrackIndex = pool.randomElement() ?? pool[0]
+            var remaining = pool.filter { !shufflePlayedIDs.contains(tracks[$0].id) }
+            if remaining.isEmpty {
+                shufflePlayedIDs.removeAll()
+                remaining = pool.filter { $0 != currentTrackIndex }
+                if remaining.isEmpty { remaining = pool }
+            }
+            let nextIdx = remaining.randomElement() ?? pool[0]
+            play(trackIndex: nextIdx, settings: settings)
         } else if let pos = pool.firstIndex(of: currentTrackIndex) {
-            currentTrackIndex = pool[(pos + 1) % pool.count]
+            let nextIdx = pool[(pos + 1) % pool.count]
+            play(trackIndex: nextIdx, settings: settings)
         } else {
-            currentTrackIndex = pool[0]
+            play(trackIndex: pool[0], settings: settings)
         }
-        play(trackIndex: currentTrackIndex, settings: settings)
     }
 
-    func togglePlayStop(settings: AppSettings) {
-        if isPlaying {
+    public func playPrevious(settings: AppSettings) {
+        if playHistory.count > 1 {
+            _ = playHistory.popLast()
+            if let prev = playHistory.last {
+                play(trackIndex: prev, settings: settings, recordHistory: false)
+                return
+            }
+        }
+        let pool = activeTrackIndices(settings: settings)
+        guard !pool.isEmpty else { return }
+        if let pos = pool.firstIndex(of: currentTrackIndex) {
+            let prevIdx = pool[(pos - 1 + pool.count) % pool.count]
+            play(trackIndex: prevIdx, settings: settings, recordHistory: false)
+        } else {
+            play(trackIndex: pool[0], settings: settings, recordHistory: false)
+        }
+    }
+
+    public func togglePlayStop(settings: AppSettings) {
+        if isPlaying || isPaused {
             stop()
         } else {
             play(settings: settings)
         }
     }
 
-    func stop() {
+    public func stop() {
+        cancelInterTrackDelay()
         stopPlaybackOnly()
         pauseTimer?.invalidate()
         pauseTimer = nil
         isPlaying = false
+        isPaused = false
         currentTrackTitle = "Stopped"
+        currentTrackFormatInfo = ""
     }
 
     private func stopPlaybackOnly() {
-        synthTimer?.invalidate()
-        synthTimer = nil
-        midiPlayer?.stop()
-        midiPlayer = nil
+        midiSynth.stop()
         musicAudioPlayer?.stop()
         musicAudioPlayer = nil
-        synthSampler?.stopNote(60, onChannel: 0)
-        synthEngine?.stop()
+    }
+
+    private func cancelInterTrackDelay() {
+        interTrackDelayWorkItem?.cancel()
+        interTrackDelayWorkItem = nil
     }
 
     private func schedulePauseTimerIfNeeded(settings: AppSettings) {
@@ -240,12 +427,58 @@ public final class AudioEngineService: NSObject, ObservableObject, AVAudioPlayer
         }
     }
 
-    private func handleTrackCompleted(settings: AppSettings) {
+    public func handleTrackCompleted(settings: AppSettings) {
         guard isPlaying else { return }
-        playNext(settings: settings)
+        let pool = activeTrackIndices(settings: settings)
+        guard !pool.isEmpty else {
+            stop()
+            return
+        }
+
+        switch settings.musicRepeatMode {
+        case .repeatOne:
+            scheduleAfterTrackDelay(settings.musicTrackDelaySeconds) { [weak self] in
+                self?.play(trackIndex: self?.currentTrackIndex, settings: settings, recordHistory: false)
+            }
+        case .stopAfterPlaylist:
+            if settings.musicPlayMode == 1 {
+                let remaining = pool.filter { !shufflePlayedIDs.contains(tracks[$0].id) }
+                if remaining.isEmpty {
+                    stop()
+                    return
+                }
+            } else if let pos = pool.firstIndex(of: currentTrackIndex), pos == pool.count - 1 {
+                stop()
+                return
+            }
+            scheduleAfterTrackDelay(settings.musicTrackDelaySeconds) { [weak self] in
+                self?.playNext(settings: settings)
+            }
+        case .repeatAll:
+            scheduleAfterTrackDelay(settings.musicTrackDelaySeconds) { [weak self] in
+                self?.playNext(settings: settings)
+            }
+        }
+    }
+
+    private func scheduleAfterTrackDelay(_ seconds: Double, action: @escaping () -> Void) {
+        cancelInterTrackDelay()
+        let delay = max(0.0, seconds)
+        if delay <= 0.02 {
+            action()
+            return
+        }
+        let item = DispatchWorkItem(block: action)
+        interTrackDelayWorkItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: item)
     }
 
     public func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        handleTrackCompleted(settings: SettingsStore.shared.settings)
+    }
+
+    public func audioPlayerDecodeErrorDidOccur(_ player: AVAudioPlayer, error: Error?) {
+        lastErrorMessage = error?.localizedDescription ?? "Audio decode error"
         handleTrackCompleted(settings: SettingsStore.shared.settings)
     }
 
@@ -258,50 +491,9 @@ public final class AudioEngineService: NSObject, ObservableObject, AVAudioPlayer
         return matching.isEmpty ? Array(tracks.indices) : matching
     }
 
-    // MARK: - Clean-Room Chime/Celesta Carol Synthesizer
+    // MARK: - Clean-Room Multi-Track General MIDI Carol Library
 
-    private func ensureSynthReady() {
-        if synthEngine != nil { return }
-        let engine = AVAudioEngine()
-        let sampler = AVAudioUnitSampler()
-        engine.attach(sampler)
-        engine.connect(sampler, to: engine.mainMixerNode, format: nil)
-        try? engine.start()
-        self.synthEngine = engine
-        self.synthSampler = sampler
-    }
-
-    private func playBuiltInCarolFallback(_ track: MusicTrack, settings: AppSettings) {
-        guard let notes = track.builtInNotes, !notes.isEmpty else { return }
-        ensureSynthReady()
-        if synthEngine?.isRunning == false { try? synthEngine?.start() }
-        synthStep = 0
-        playNextSynthStep(notes: notes, bpm: track.tempoBPM, settings: settings)
-    }
-
-    private func playNextSynthStep(notes: [(midi: UInt8, beats: Double)], bpm: Double, settings: AppSettings) {
-        guard isPlaying else { return }
-        if synthStep >= notes.count {
-            handleTrackCompleted(settings: settings)
-            return
-        }
-        let item = notes[synthStep]
-        synthStep += 1
-        let sec = max(0.08, item.beats * (60.0 / bpm))
-        if item.midi > 0 {
-            synthSampler?.startNote(item.midi, withVelocity: 78, onChannel: 0)
-            DispatchQueue.main.asyncAfter(deadline: .now() + sec * 0.85) { [weak self] in
-                guard let self, self.isPlaying, self.synthEngine?.isRunning == true else { return }
-                self.synthSampler?.stopNote(item.midi, onChannel: 0)
-            }
-        }
-        synthTimer = Timer.scheduledTimer(withTimeInterval: sec, repeats: false) { [weak self] _ in
-            self?.playNextSynthStep(notes: notes, bpm: bpm, settings: settings)
-        }
-    }
-
-    static func builtInCarols() -> [MusicTrack] {
-        // Traditional public-domain melody note sequences
+    public static func builtInCarols() -> [MusicTrack] {
         let jingleBells: [(UInt8, Double)] = [
             (64,1),(64,1),(64,2), (64,1),(64,1),(64,2), (64,1),(67,1),(60,1.5),(62,0.5),(64,4),
             (65,1),(65,1),(65,1.5),(65,0.5), (65,1),(64,1),(64,1),(64,0.5),(64,0.5),
@@ -352,15 +544,27 @@ public final class AudioEngineService: NSObject, ObservableObject, AVAudioPlayer
             (64,1),(64,1),(64,1),(63,1),(64,1),(67,1),(65,1),(62,2),(60,1),(62,1),(64,1),(60,1),(64,1),(67,3),
             (64,1),(64,1),(69,1),(67,1),(65,1),(65,1),(64,2),(62,1),(60,1),(62,1),(64,1),(62,1),(64,1),(60,3)
         ]
-        return [
-            MusicTrack(id: "builtin:jingle_bells", title: "Jingle Bells", url: nil, builtInNotes: jingleBells, tempoBPM: 140),
-            MusicTrack(id: "builtin:deck_halls", title: "Deck the Halls", url: nil, builtInNotes: deckTheHalls, tempoBPM: 132),
-            MusicTrack(id: "builtin:silent_night", title: "Silent Night", url: nil, builtInNotes: silentNight, tempoBPM: 92),
-            MusicTrack(id: "builtin:first_noel", title: "The First Noel", url: nil, builtInNotes: firstNoel, tempoBPM: 108),
-            MusicTrack(id: "builtin:greensleeves", title: "Greensleeves", url: nil, builtInNotes: greensleeves, tempoBPM: 112),
-            MusicTrack(id: "builtin:little_town", title: "O Little Town of Bethlehem", url: nil, builtInNotes: littleTown, tempoBPM: 104),
-            MusicTrack(id: "builtin:joy_world", title: "Joy to the World", url: nil, builtInNotes: joyToTheWorld, tempoBPM: 126),
-            MusicTrack(id: "builtin:we_wish", title: "We Wish You a Merry Christmas", url: nil, builtInNotes: weWishYou, tempoBPM: 136)
+
+        let specs: [BuiltInCarolMIDIBuilder.CarolSpec] = [
+            .init(id: "builtin:jingle_bells", title: "Jingle Bells (GM)", bpm: 140, melodyProgram: 8, harmonyProgram: 48, bassProgram: 32, includePercussion: true, notes: jingleBells),
+            .init(id: "builtin:deck_halls", title: "Deck the Halls (GM)", bpm: 132, melodyProgram: 14, harmonyProgram: 48, bassProgram: 32, includePercussion: true, notes: deckTheHalls),
+            .init(id: "builtin:silent_night", title: "Silent Night (GM)", bpm: 92, melodyProgram: 10, harmonyProgram: 89, bassProgram: 43, includePercussion: false, notes: silentNight),
+            .init(id: "builtin:first_noel", title: "The First Noel (GM)", bpm: 108, melodyProgram: 68, harmonyProgram: 48, bassProgram: 32, includePercussion: false, notes: firstNoel),
+            .init(id: "builtin:greensleeves", title: "Greensleeves (GM)", bpm: 112, melodyProgram: 73, harmonyProgram: 46, bassProgram: 32, includePercussion: false, notes: greensleeves),
+            .init(id: "builtin:little_town", title: "O Little Town of Bethlehem (GM)", bpm: 104, melodyProgram: 11, harmonyProgram: 49, bassProgram: 32, includePercussion: false, notes: littleTown),
+            .init(id: "builtin:joy_world", title: "Joy to the World (GM)", bpm: 126, melodyProgram: 56, harmonyProgram: 48, bassProgram: 32, includePercussion: true, notes: joyToTheWorld),
+            .init(id: "builtin:we_wish", title: "We Wish You a Merry Christmas (GM)", bpm: 136, melodyProgram: 0, harmonyProgram: 48, bassProgram: 32, includePercussion: true, notes: weWishYou)
         ]
+
+        let primary = specs.map { spec in
+            MusicTrack(
+                id: spec.id,
+                title: spec.title,
+                url: nil,
+                builtInMIDI: BuiltInCarolMIDIBuilder.buildFormat1MIDI(spec: spec),
+                tempoBPM: spec.bpm
+            )
+        }
+        return primary + HolidayMusicPack105.expansionTracks()
     }
 }

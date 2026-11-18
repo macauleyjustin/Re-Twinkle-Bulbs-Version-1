@@ -8,9 +8,12 @@ final class StatusBarController: NSObject {
     var onOpenSettings: (() -> Void)?
     var onToggleLights: (() -> Void)?
     var onToggleMusic: (() -> Void)?
+    var onTogglePauseMusic: (() -> Void)?
+    var onPreviousMusic: (() -> Void)?
     var onNextMusic: (() -> Void)?
     var onStartScreenSaver: (() -> Void)?
     var onOpenCalendar: (() -> Void)?
+    var onOpenAdventCalendar: (() -> Void)?
     var onOpenTips: (() -> Void)?
     var onOpenAbout: (() -> Void)?
     var onToggleQuickAccess: (() -> Void)?
@@ -69,6 +72,20 @@ final class StatusBarController: NSObject {
         toggleMusic.target = self
         menu.addItem(toggleMusic)
 
+        if AudioEngineService.shared.isPlaying || AudioEngineService.shared.isPaused {
+            let pauseItem = NSMenuItem(
+                title: AudioEngineService.shared.isPaused ? "Resume Music" : "Pause Music",
+                action: #selector(menuTogglePauseMusic),
+                keyEquivalent: ""
+            )
+            pauseItem.target = self
+            menu.addItem(pauseItem)
+        }
+
+        let prevSong = NSMenuItem(title: "Previous Music Track", action: #selector(menuPrevMusic), keyEquivalent: "")
+        prevSong.target = self
+        menu.addItem(prevSong)
+
         let nextSong = NSMenuItem(title: "Next Music Track", action: #selector(menuNextMusic), keyEquivalent: "n")
         nextSong.target = self
         menu.addItem(nextSong)
@@ -94,6 +111,10 @@ final class StatusBarController: NSObject {
         let calItem = NSMenuItem(title: "Holiday Calendar...", action: #selector(menuViewCalendar), keyEquivalent: "")
         calItem.target = self
         menu.addItem(calItem)
+
+        let advItem = NSMenuItem(title: "Advent Calendar...", action: #selector(menuViewAdventCalendar), keyEquivalent: "")
+        advItem.target = self
+        menu.addItem(advItem)
 
         let aboutItem = NSMenuItem(title: "About Twinkle Bulbs...", action: #selector(menuOpenAbout), keyEquivalent: "")
         aboutItem.target = self
@@ -149,12 +170,15 @@ final class StatusBarController: NSObject {
 
     @objc private func menuToggleLights() { onToggleLights?() }
     @objc private func menuToggleMusic() { onToggleMusic?() }
+    @objc private func menuTogglePauseMusic() { onTogglePauseMusic?() }
+    @objc private func menuPrevMusic() { onPreviousMusic?() }
     @objc private func menuNextMusic() { onNextMusic?() }
     @objc private func menuStartSS() { onStartScreenSaver?() }
     @objc private func menuOpenSettings() { onOpenSettings?() }
     @objc private func menuToggleQuickAccess() { onToggleQuickAccess?() }
     @objc private func menuOpenTips() { onOpenTips?() }
     @objc private func menuViewCalendar() { onOpenCalendar?() }
+    @objc private func menuViewAdventCalendar() { onOpenAdventCalendar?() }
     @objc private func menuOpenAbout() { onOpenAbout?() }
     @objc private func menuExit() { onExitRequested?() }
 

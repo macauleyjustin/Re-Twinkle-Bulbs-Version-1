@@ -8,13 +8,42 @@ public final class BulbCanvasView: NSView {
     public override var isOpaque: Bool { false }
 
     var engine: BulbEngine?
+    var modernEngine: ModernLightingEngine?
     var currentSettings: AppSettings = .defaultSettings()
 
     public override func draw(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext,
-              let engine = engine,
               currentSettings.lightsEnabled else { return }
-        Self.drawSlots(engine.slots, settings: currentSettings, in: ctx, clipRect: dirtyRect)
+        if currentSettings.lightingCategory == .modern, let modern = modernEngine {
+            Self.drawModernStates(modern.states, settings: currentSettings, in: ctx, clipRect: dirtyRect)
+        } else if let engine = engine {
+            Self.drawSlots(engine.slots, settings: currentSettings, in: ctx, clipRect: dirtyRect)
+        }
+    }
+
+    static func drawModernStates(_ states: [ModernBulbState], settings: AppSettings, in ctx: CGContext, clipRect: CGRect? = nil) {
+        let registry = BulbArtworkRegistry.shared
+        ctx.saveGState()
+        ctx.interpolationQuality = .none
+        for state in states {
+            if let clip = clipRect, !state.frame.intersects(clip) { continue }
+            let pair = registry.modernImages(for: state, settings: settings)
+            if pair.base == nil && pair.lit == nil { continue }
+            ctx.saveGState()
+            ctx.translateBy(x: state.frame.minX, y: state.frame.maxY)
+            ctx.scaleBy(x: 1, y: -1)
+            let target = CGRect(x: 0, y: 0, width: state.frame.width, height: state.frame.height)
+            if let base = pair.base {
+                ctx.setAlpha(1.0)
+                ctx.draw(base, in: target)
+            }
+            if let lit = pair.lit, state.intensity > 0.01 {
+                ctx.setAlpha(CGFloat(max(0.0, min(1.0, state.intensity))))
+                ctx.draw(lit, in: target)
+            }
+            ctx.restoreGState()
+        }
+        ctx.restoreGState()
     }
 
     static func drawSlots(_ slots: [BulbSlot], settings: AppSettings, in ctx: CGContext, clipRect: CGRect? = nil) {
@@ -53,6 +82,24 @@ public final class BulbCanvasView: NSView {
         drawSlots(engine.slots, settings: settings, in: ctx)
         return ctx.makeImage()
     }
+
+    public static func renderModernSnapshot(width: Int, height: Int, modernEngine: ModernLightingEngine, settings: AppSettings, backgroundColor: NSColor? = nil) -> CGImage? {
+        let cs = CGColorSpaceCreateDeviceRGB()
+        guard let ctx = CGContext(
+            data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+            space: cs, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+
+        ctx.translateBy(x: 0, y: CGFloat(height))
+        ctx.scaleBy(x: 1, y: -1)
+
+        if let bg = backgroundColor {
+            ctx.setFillColor(bg.cgColor)
+            ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        }
+        drawModernStates(modernEngine.states, settings: settings, in: ctx)
+        return ctx.makeImage()
+    }
 }
 
 // MARK: - Transparent Click-Through Overlay Controller
@@ -63,6 +110,7 @@ final class OverlayWindowController {
         let window: NSWindow
         let canvas: BulbCanvasView
         let engine: BulbEngine
+        let modernEngine: ModernLightingEngine
     }
 
     private var overlays: [DisplayOverlay] = []
@@ -127,18 +175,30 @@ final class OverlayWindowController {
             || old.highlightColorHex != newSettings.highlightColorHex
             || old.rate != newSettings.rate
             || old.lightsEnabled != newSettings.lightsEnabled
+            || old.modernEffects.seed != newSettings.modernEffects.seed
+            || old.modernEffects.perMonitorPhaseOffset != newSettings.modernEffects.perMonitorPhaseOffset
 
         if needsRebuild {
             rebuildOverlays(with: newSettings)
         } else {
             for item in overlays {
                 item.canvas.currentSettings = newSettings
+                item.modernEngine.updateConfigOnly(newSettings.modernEffects)
                 item.canvas.needsDisplay = true
             }
             updateWindowVisibility()
         }
 
         ensureTimers()
+    }
+
+    func handleMIDIEvent(_ evt: MIDILightEvent) {
+        guard settings.lightingCategory == .modern,
+              settings.modernEffects.midiReactiveEnabled,
+              !isPausedForScreenSaver else { return }
+        for item in overlays {
+            item.modernEngine.handleMIDIEvent(evt)
+        }
     }
 
     func rebuildOverlays(with newSettings: AppSettings) {
@@ -161,7 +221,7 @@ final class OverlayWindowController {
         }
 
         let nowMs = currentMonotonicMs()
-        for scr in targetScreens {
+        for (monIdx, scr) in targetScreens.enumerated() {
             let winFrame = targetRect(for: scr, settings: newSettings)
             let win = NSWindow(
                 contentRect: winFrame,
@@ -182,15 +242,19 @@ final class OverlayWindowController {
             let localBounds = CGRect(origin: .zero, size: winFrame.size)
             engine.configure(bounds: localBounds, settings: newSettings, nowMs: nowMs)
 
+            let modern = ModernLightingEngine(seed: newSettings.modernEffects.seed)
+            modern.configure(bounds: localBounds, settings: newSettings, monitorOffset: monIdx, nowMs: nowMs)
+
             let canvas = BulbCanvasView(frame: localBounds)
             canvas.engine = engine
+            canvas.modernEngine = modern
             canvas.currentSettings = newSettings
             win.contentView = canvas
 
             if !isPausedForScreenSaver {
                 win.orderFrontRegardless()
             }
-            overlays.append(DisplayOverlay(screen: scr, window: win, canvas: canvas, engine: engine))
+            overlays.append(DisplayOverlay(screen: scr, window: win, canvas: canvas, engine: engine, modernEngine: modern))
         }
 
         ensureTimers()
@@ -249,12 +313,21 @@ final class OverlayWindowController {
         animationTimer = nil
 
         if settings.lightsEnabled && !settings.runSSOnly {
-            // Exact 50 ms master animation poll matching SetTimer(..., 5, 50)
-            let timer = Timer(timeInterval: 0.050, repeats: true) { [weak self] _ in
-                self?.stepAnimation()
+            if settings.lightingCategory == .modern {
+                let fpsInterval = settings.modernEffects.smoothness >= 0.5 ? (1.0 / 60.0) : (1.0 / 30.0)
+                let timer = Timer(timeInterval: fpsInterval, repeats: true) { [weak self] _ in
+                    self?.stepAnimation()
+                }
+                RunLoop.main.add(timer, forMode: .common)
+                animationTimer = timer
+            } else {
+                // Exact 50 ms master animation poll matching SetTimer(..., 5, 50)
+                let timer = Timer(timeInterval: 0.050, repeats: true) { [weak self] _ in
+                    self?.stepAnimation()
+                }
+                RunLoop.main.add(timer, forMode: .common)
+                animationTimer = timer
             }
-            RunLoop.main.add(timer, forMode: .common)
-            animationTimer = timer
         }
 
         changerTimer?.invalidate()
@@ -272,13 +345,21 @@ final class OverlayWindowController {
     private func stepAnimation() {
         guard !isPausedForScreenSaver, settings.lightsEnabled else { return }
         let nowMs = currentMonotonicMs()
-        for item in overlays {
-            if item.engine.tick(nowMs: nowMs) {
+        if settings.lightingCategory == .modern {
+            for item in overlays {
+                item.modernEngine.tick(nowMs: nowMs)
                 item.canvas.needsDisplay = true
             }
-        }
-        if let first = overlays.first {
-            onTraySyncTick?(first.engine.traySyncLitState)
+            onTraySyncTick?(true)
+        } else {
+            for item in overlays {
+                if item.engine.tick(nowMs: nowMs) {
+                    item.canvas.needsDisplay = true
+                }
+            }
+            if let first = overlays.first {
+                onTraySyncTick?(first.engine.traySyncLitState)
+            }
         }
     }
 

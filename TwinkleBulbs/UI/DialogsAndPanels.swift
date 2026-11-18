@@ -10,6 +10,7 @@ public final class QuickAccessPanelController: NSWindowController {
 
     var onOpenSettings: (() -> Void)?
     var onStartSaver: (() -> Void)?
+    var onSettingsChanged: ((AppSettings) -> Void)?
 
     public convenience init() {
         let panel = NSPanel(
@@ -73,6 +74,7 @@ public final class QuickAccessPanelController: NSWindowController {
         var s = SettingsStore.shared.settings
         s.lightsEnabled.toggle()
         SettingsStore.shared.settings = s
+        onSettingsChanged?(s)
         AudioEngineService.shared.playEffect(.click, enabled: s.soundFX)
         refresh()
     }
@@ -82,6 +84,7 @@ public final class QuickAccessPanelController: NSWindowController {
         if let fm = FlashMode(rawValue: flashPopup.indexOfSelectedItem) {
             s.flashMode = fm
             SettingsStore.shared.settings = s
+            onSettingsChanged?(s)
             AudioEngineService.shared.playEffect(.softTick, enabled: s.soundFX)
         }
     }
@@ -91,6 +94,7 @@ public final class QuickAccessPanelController: NSWindowController {
         if let cm = ColorMode(rawValue: colorPopup.indexOfSelectedItem) {
             s.colorMode = cm
             SettingsStore.shared.settings = s
+            onSettingsChanged?(s)
             AudioEngineService.shared.playEffect(.softTick, enabled: s.soundFX)
         }
     }

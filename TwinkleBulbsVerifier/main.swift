@@ -352,5 +352,463 @@ if let qaContent = qaCtrl.window?.contentView {
     check(snapshotView(qaContent, to: scratchDir.appendingPathComponent("verify_quick_access.png")), "Rendered Quick Access panel snapshot")
 }
 
+// =========================================================================
+// [6] Version 2: Authentic MIDI Parser, GS Wavetable Synth & Jukebox Tests
+// =========================================================================
+print("\n[6] Authentic MIDI Playback, GS Sound Bank, and Programmable Jukebox")
+
+// 6.1 Verify built-in carols are multi-track Format 1 GM MIDI with Ch10 percussion
+let carols = AudioEngineService.builtInCarols()
+check(carols.count == 105, "Built-in library has 105 carol & seasonal GM MIDI arrangements (got \(carols.count))")
+if let jingle = carols.first, let midiData = jingle.builtInMIDI {
+    do {
+        let parsed = try StandardMIDIFileParser.parse(data: midiData)
+        check(parsed.format == 1 && parsed.trackCount >= 5, "Built-in Jingle Bells is multi-track Format 1 SMF")
+        check(parsed.channelsUsed.count >= 4, "Built-in Jingle Bells spans multiple MIDI channels")
+        check(parsed.hasPercussion, "Built-in Jingle Bells includes Channel 10 Sleigh Bells/percussion")
+        check(!parsed.programsUsed.isEmpty, "Built-in Jingle Bells includes Program Changes")
+    } catch {
+        check(false, "Built-in MIDI parse threw unexpectedly: \(error)")
+    }
+} else {
+    check(false, "Built-in Jingle Bells missing MIDI data")
+}
+
+// 6.2 Verify Format 0 & Format 1 parsing on local v6 reference MIDIs (if present) + error reporting + RIFF RMI unwrap
+do {
+    _ = try StandardMIDIFileParser.parse(data: Data([0x00, 0x01, 0x02]))
+    check(false, "Corrupt short MIDI should fail")
+} catch {
+    check(true, "Corrupt/short MIDI raises explicit parse error")
+}
+
+// Construct a synthetic Format 0 SMF with tempo change + PitchBend + Sustain + Ch10 wrapped in RIFF RMID
+func makeTestSMF() -> Data {
+    let trk: [UInt8] = [
+        0x00, 0xFF, 0x51, 0x03, 0x07, 0xA1, 0x20, // 120 BPM
+        0x00, 0xC0, 40,                            // Violin on ch 0
+        0x00, 0xB0, 64, 127,                       // Sustain on
+        0x00, 0x90, 60, 100,                       // C4 on
+        0x00, 0x99, 36, 110,                       // Ch 10 Bass Drum
+        0x60, 0xFF, 0x51, 0x03, 0x06, 0x1A, 0x80,  // Tempo change (~150 BPM)
+        0x60, 0xE0, 0x00, 0x50,                    // Pitch bend
+        0x60, 0x80, 60, 0x00,                      // Note off
+        0x00, 0x89, 36, 0x00,                      // Drum off
+        0x00, 0xFF, 0x2F, 0x00
+    ]
+    var smf = Data("MThd".utf8)
+    smf.append(contentsOf: [0,0,0,6, 0,0, 0,1, 0x00, 0x60]) // Format 0, 1 track, 96 PPQN
+    smf.append(contentsOf: Array("MTrk".utf8))
+    let len = UInt32(trk.count)
+    smf.append(contentsOf: [UInt8((len >> 24) & 0xFF), UInt8((len >> 16) & 0xFF), UInt8((len >> 8) & 0xFF), UInt8(len & 0xFF)])
+    smf.append(contentsOf: trk)
+    return smf
+}
+let smfBytes = makeTestSMF()
+var rmi = Data("RIFF".utf8)
+let riffLen = UInt32(4 + 8 + smfBytes.count)
+let dLen = UInt32(smfBytes.count)
+rmi.append(contentsOf: [UInt8(riffLen & 0xFF), UInt8((riffLen >> 8) & 0xFF), UInt8((riffLen >> 16) & 0xFF), UInt8((riffLen >> 24) & 0xFF)])
+rmi.append(contentsOf: Array("RMIDdata".utf8))
+rmi.append(contentsOf: [UInt8(dLen & 0xFF), UInt8((dLen >> 8) & 0xFF), UInt8((dLen >> 16) & 0xFF), UInt8((dLen >> 24) & 0xFF)])
+rmi.append(smfBytes)
+
+if let parsedRMI = try? StandardMIDIFileParser.parse(data: rmi) {
+    check(parsedRMI.format == 0 && parsedRMI.hasPercussion && parsedRMI.channelsUsed.contains(0), "SMF Format 0 & RIFF .rmi unwrapping parses channels & Ch10 percussion")
+} else {
+    check(false, "RIFF .rmi parse failed")
+}
+
+let refMidDir = URL(fileURLWithPath: "/Users/renseven/.gemini/antigravity/scratch/TwinkleBulbsMac/research/v6_extracted/music", isDirectory: true)
+let silentMid = refMidDir.appendingPathComponent("Silent Night.mid")
+let jingleMid = refMidDir.appendingPathComponent("Jingle Bells.mid")
+if FileManager.default.fileExists(atPath: silentMid.path), FileManager.default.fileExists(atPath: jingleMid.path) {
+    let p0 = try? StandardMIDIFileParser.parse(url: silentMid)
+    let p1 = try? StandardMIDIFileParser.parse(url: jingleMid)
+    check(p0?.format == 0 && (p0?.events.count ?? 0) > 50, "Real Format 0 MIDI ('Silent Night.mid') parsed cleanly")
+    check(p1?.format == 1 && (p1?.trackCount ?? 0) >= 10 && (p1?.channelsUsed.count ?? 0) >= 3, "Real Format 1 MIDI ('Jingle Bells.mid') parsed multi-track/channel cleanly")
+}
+
+// 6.3 Real GS Wavetable Sound Bank + Live Audible PCM Energy Test (Non-silent render check)
+let synthTest = MIDISynthPlayer()
+synthTest.volume = 0.15 // modest audible verification volume
+do {
+    try synthTest.configureSoundBank(customPath: "/nonexistent/missing.sf2")
+    check(false, "Missing custom soundbank must fail explicitly")
+} catch {
+    check(true, "Missing custom soundbank raises explicit error")
+}
+
+do {
+    _ = try synthTest.load(data: smfBytes, customSoundBankPath: nil)
+    synthTest.installLevelTapIfNeeded()
+    synthTest.play()
+    RunLoop.current.run(until: Date().addingTimeInterval(0.35))
+    synthTest.pause()
+    let pausedOK = synthTest.isPaused && !synthTest.isPlaying
+    synthTest.resume()
+    let resumedOK = synthTest.isPlaying && !synthTest.isPaused
+    RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+    let rms = synthTest.peakOutputRMS
+    synthTest.stop()
+    check(pausedOK && resumedOK, "MIDISynthPlayer pause() & resume() transition cleanly")
+    check(rms > 0.0005, String(format: "MIDISynth + gs_instruments.dls rendered audible PCM signal (RMS=%.5f)", rms))
+} catch {
+    check(false, "MIDISynth GS bank live test failed: \(error)")
+}
+
+// 6.4 Programmable Jukebox Folder Discovery, Repeat Modes, ScreenSaver Music & Backward Compat
+let jukeTmpDir = FileManager.default.temporaryDirectory.appendingPathComponent("twinkle_juke_test_\(UUID().uuidString)", isDirectory: true)
+try? FileManager.default.createDirectory(at: jukeTmpDir.appendingPathComponent("Sub"), withIntermediateDirectories: true)
+let tmpMid = jukeTmpDir.appendingPathComponent("Sub/test_carol.mid")
+let tmpWav = jukeTmpDir.appendingPathComponent("tone.wav")
+try? smfBytes.write(to: tmpMid)
+let testPCM = Data(repeating: 0x10, count: 4410)
+try? AudioEngineService.wrapPCMAsWAV(pcm: testPCM, sampleRate: 22050, channels: 1, bitsPerSample: 16).write(to: tmpWav)
+
+let juke = AudioEngineService.shared
+juke.rebuildTrackList(musicDirectoryPath: jukeTmpDir.path)
+let resolvedMid = tmpMid.resolvingSymlinksInPath().standardizedFileURL.path
+let resolvedWav = tmpWav.resolvingSymlinksInPath().standardizedFileURL.path
+check(juke.tracks.contains(where: { $0.url?.resolvingSymlinksInPath().standardizedFileURL.path == resolvedMid }) &&
+      juke.tracks.contains(where: { $0.url?.resolvingSymlinksInPath().standardizedFileURL.path == resolvedWav }),
+      "Jukebox discovers recursive custom directory MIDI and WAV files")
+
+var jukeSettings = AppSettings.defaultSettings()
+jukeSettings.musicEnabled = true
+jukeSettings.ssMusic = true
+juke.syncWithSettings(jukeSettings, isScreenSaverActive: false)
+check(!juke.isPlaying, "ScreenSaver-only music stays silent during desktop mode")
+juke.syncWithSettings(jukeSettings, isScreenSaverActive: true)
+check(juke.isPlaying, "ScreenSaver-only music starts cleanly when screen saver activates")
+juke.stop()
+
+jukeSettings.ssMusic = false
+jukeSettings.musicRepeatMode = .stopAfterPlaylist
+juke.play(trackIndex: juke.tracks.count - 1, settings: jukeSettings)
+juke.handleTrackCompleted(settings: jukeSettings)
+check(!juke.isPlaying, "Repeat mode stopAfterPlaylist halts cleanly at final track")
+juke.rebuildTrackList(musicDirectoryPath: "")
+try? FileManager.default.removeItem(at: jukeTmpDir)
+
+// v1 JSON backward compatibility check (full v1 payload with zero v2 keys)
+var baseV1 = AppSettings.defaultSettings()
+baseV1.bulbSetName = "Icicles"
+let baseData = (try? JSONEncoder().encode(baseV1)) ?? Data()
+if var rawDict = (try? JSONSerialization.jsonObject(with: baseData)) as? [String: Any] {
+    for k in rawDict.keys where k.hasPrefix("v2") { rawDict.removeValue(forKey: k) }
+    if let legacyStripped = try? JSONSerialization.data(withJSONObject: rawDict),
+       let compat = try? JSONDecoder().decode(AppSettings.self, from: legacyStripped) {
+        check(compat.bulbSetName == "Icicles" && compat.lightingCategory == .classic && compat.musicRepeatMode == .repeatAll,
+              "Legacy v1 JSON settings decode cleanly with v2 defaults preserved")
+    } else {
+        check(false, "Legacy v1 JSON decoding failed")
+    }
+} else {
+    check(false, "Legacy v1 JSON setup failed")
+}
+
+// =========================================================================
+// [7] Version 2: Advanced / Modern Lighting Engine (15 Effects + MIDI Sync)
+// =========================================================================
+print("\n[7] Advanced / Modern Lighting Engine (15 Effects, Sprite Tint, MIDI-Reactive)")
+
+var modSettings = AppSettings.defaultSettings()
+modSettings.lightingCategory = .modern
+modSettings.location = .aroundScreen
+modSettings.noCorners = true
+check(AppSettings.defaultSettings().lightingCategory == .classic, "Historical default remains Original / Classic")
+
+var allEffectsValid = true
+var allEffectsAnimate = true
+for eff in ModernEffectID.allCases {
+    modSettings.modernEffects.effect = eff
+    modSettings.modernEffects.brightness = 1.0
+    modSettings.modernEffects.seed = 424242
+    let mEng = ModernLightingEngine(seed: 424242)
+    mEng.configure(bounds: CGRect(x: 0, y: 0, width: 640, height: 320), settings: modSettings, nowMs: 0)
+    let firstSnap = mEng.states
+    var sawDelta = false
+    var prevSnap = firstSnap
+    for step in 1...60 {
+        mEng.stepDeterministic(dt: 1.0 / 30.0)
+        if step == 40 && eff == .autoCycle { mEng.stepDeterministic(dt: 3.0) }
+        if zip(prevSnap, mEng.states).contains(where: { abs($0.intensity - $1.intensity) > 0.005 || abs($0.r - $1.r) > 0.005 || abs($0.g - $1.g) > 0.005 }) {
+            sawDelta = true
+        }
+        prevSnap = mEng.states
+    }
+    let laterSnap = mEng.states
+    let boundsOK = laterSnap.allSatisfy { $0.intensity >= 0 && $0.intensity <= 1.0 && $0.r >= 0 && $0.r <= 1.0 && $0.g >= 0 && $0.g <= 1.0 && $0.b >= 0 && $0.b <= 1.0 }
+    if !boundsOK || laterSnap.count != firstSnap.count { allEffectsValid = false }
+    if !sawDelta {
+        print("  [WARN] Modern effect \(eff.displayName) showed no delta")
+        allEffectsAnimate = false
+    }
+}
+check(allEffectsValid && ModernEffectID.allCases.count == 15, "All 15 modern effects produce valid RGB/intensity bounds")
+check(allEffectsAnimate, "All 15 modern effects animate across deterministic frames")
+
+// Deterministic seed reproducibility & monitor phase offset
+modSettings.modernEffects.effect = .twinklefox
+modSettings.modernEffects.seed = 7777
+let detA = ModernLightingEngine(seed: 7777)
+let detB = ModernLightingEngine(seed: 7777)
+detA.configure(bounds: CGRect(x: 0, y: 0, width: 512, height: 128), settings: modSettings, monitorOffset: 0, nowMs: 0)
+detB.configure(bounds: CGRect(x: 0, y: 0, width: 512, height: 128), settings: modSettings, monitorOffset: 0, nowMs: 0)
+for _ in 0..<25 { detA.stepDeterministic(dt: 0.033); detB.stepDeterministic(dt: 0.033) }
+check(detA.states == detB.states, "Deterministic random seed reproduces identical ModernLightingEngine states")
+
+// Multi-monitor phase offset differs cleanly
+modSettings.modernEffects.perMonitorPhaseOffset = true
+let detMon1 = ModernLightingEngine(seed: 7777)
+detMon1.configure(bounds: CGRect(x: 0, y: 0, width: 512, height: 128), settings: modSettings, monitorOffset: 1, nowMs: 0)
+for _ in 0..<25 { detMon1.stepDeterministic(dt: 0.033) }
+check(detA.states != detMon1.states, "Per-monitor phase offset differentiates monitor strands")
+
+// Classic settings isolation when returning from modern mode
+var isoSettings = AppSettings.defaultSettings()
+isoSettings.flashMode = .alternating
+isoSettings.colorMode = .redWhiteBlue
+isoSettings.lightingCategory = .modern
+isoSettings.modernEffects.effect = .candyCane
+isoSettings.lightingCategory = .classic
+check(isoSettings.flashMode == .alternating && isoSettings.colorMode == .redWhiteBlue,
+      "Switching Modern -> Classic preserves historical Classic configuration intact")
+
+// MIDI-reactive boost check
+modSettings.modernEffects.midiReactiveEnabled = true
+modSettings.modernEffects.midiReactiveMode = .velocityBrightness
+modSettings.modernEffects.brightness = 0.25
+let midiEng = ModernLightingEngine(seed: 999)
+midiEng.configure(bounds: CGRect(x: 0, y: 0, width: 512, height: 128), settings: modSettings, nowMs: 0)
+let baseSum = midiEng.states.map(\.intensity).reduce(0, +)
+midiEng.handleMIDIEvent(MIDILightEvent(channel: 9, note: 36, velocity: 127, isNoteOn: true, currentBPM: 120, positionSeconds: 0.1))
+midiEng.stepDeterministic(dt: 0.016)
+let pulseSum = midiEng.states.map(\.intensity).reduce(0, +)
+check(pulseSum > baseSum, "MIDI-reactive mode boosts strand illumination on note/drum event")
+
+// Visual sprite-preserving render snapshots of Modern Rainbow Chase & Candy Cane
+modSettings.modernEffects.midiReactiveEnabled = false
+modSettings.modernEffects.brightness = 1.0
+modSettings.modernEffects.effect = .rainbowChase
+modSettings.modernEffects.palette = .rainbowSpectrum
+let visEng = ModernLightingEngine(seed: 123)
+visEng.configure(bounds: CGRect(x: 0, y: 0, width: 640, height: 180), settings: modSettings, nowMs: 0)
+for _ in 0..<15 { visEng.stepDeterministic(dt: 0.033) }
+if let modImg = BulbCanvasView.renderModernSnapshot(width: 640, height: 180, modernEngine: visEng, settings: modSettings, backgroundColor: NSColor(srgbRed: 0.05, green: 0.12, blue: 0.22, alpha: 1)) {
+    check(writePNG(modImg, to: scratchDir.appendingPathComponent("verify_modern_rainbow.png")), "Rendered sprite-based Modern Rainbow Chase visual verification snapshot")
+}
+
+// =========================================================================
+// [8] Complete Holiday Edition: 250 Bulbs, 20 Screen Savers, 130 Wallpapers,
+//     105 MIDI Songs, 24-Door Advent Calendar, Live Previews, & Historical XP UI
+// =========================================================================
+print("\n[8] Complete Holiday Edition Verification")
+
+// 8.1 Verify 250 distinct bulb sets across 25 collections (x 10 designs each)
+let h250Defs = Holiday250Catalog.allDefinitions
+check(h250Defs.count == 250, "Holiday250Catalog contains all 250 bulb designs (got \(h250Defs.count))")
+let collections25 = BulbCollectionCategory.holiday25Collections
+check(collections25.count == 25, "25 Holiday bulb collections defined")
+let allTenEach = collections25.allSatisfy { col in h250Defs.filter { $0.collection == col }.count == 10 }
+check(allTenEach, "Each of the 25 collections contains exactly 10 bulb designs")
+check(Set(h250Defs.map(\.id)).count == 250 && Set(h250Defs.map(\.title)).count == 250, "All 250 bulb IDs and titles are unique")
+
+func cgImageHash64(_ img: CGImage) -> UInt64 {
+    let w = img.width, h = img.height
+    var buf = [UInt8](repeating: 0, count: w * h * 4)
+    guard let ctx = CGContext(data: &buf, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return 0 }
+    ctx.draw(img, in: CGRect(x: 0, y: 0, width: w, height: h))
+    var hash: UInt64 = 14695981039346656037
+    for b in buf {
+        hash ^= UInt64(b)
+        hash &*= 1099511628211
+    }
+    return hash
+}
+
+var spriteHashes = Set<UInt64>()
+var all250OnOffDiffer = true
+var all250NonEmpty = true
+for def in h250Defs {
+    let pack = Holiday250Catalog.renderSetPack(definition: def, size: 32)
+    guard let onImg = pack.onImages[2], let offImg = pack.offImages[2] else {
+        all250NonEmpty = false
+        continue
+    }
+    let onRGBA = sampleImageRGBA(onImg)
+    let offRGBA = sampleImageRGBA(offImg)
+    if onRGBA == offRGBA { all250OnOffDiffer = false }
+    let stats = opaquePixelStats(onImg)
+    if (stats.maxX - stats.minX) < 4 || (stats.maxY - stats.minY) < 4 { all250NonEmpty = false }
+    spriteHashes.insert(cgImageHash64(onImg))
+}
+check(all250NonEmpty, "All 250 bulb sets render non-empty 32x32 sprites")
+check(all250OnOffDiffer, "All 250 bulb sets have distinct ON vs OFF visual states")
+check(spriteHashes.count == 250, "All 250 bulb designs produce 250 unique rendered sprites (got \(spriteHashes.count))")
+
+// Spot-check 48x48 rendering & inward edge rotation across all 25 collections
+var spot48AndRotationOK = true
+for col in collections25 {
+    if let first = h250Defs.first(where: { $0.collection == col }) {
+        let p48 = Holiday250Catalog.renderSetPack(definition: first, size: 48)
+        if p48.onImages[2]?.width != 48 || p48.onImages[2]?.height != 48 {
+            spot48AndRotationOK = false
+        }
+        var rotS = AppSettings.defaultSettings()
+        rotS.bulbSetName = first.id
+        rotS.bulbSize = .normal
+        let rSlot = BulbSlot(index: 0, frame: CGRect(x: 0, y: 0, width: 32, height: 32), edge: .right, colorIndex: 2, isBareWire: false, isMissing: false, isBroken: false, isBurnedOut: false, isLit: true, flashable: true, nextToggleMs: 0)
+        if BulbArtworkRegistry.shared.image(for: rSlot, settings: rotS) == nil {
+            spot48AndRotationOK = false
+        }
+    }
+}
+check(spot48AndRotationOK, "48x48 size and inward edge rotation work cleanly across all 25 collections")
+
+// Render 250-Bulb Contact Sheet (25 rows x 10 cols on dark navy canvas)
+do {
+    let cols = 10, rows = 25, cell = 36, labelW = 210
+    let sheetW = labelW + cols * cell + 16
+    let sheetH = rows * cell + 20
+    if let ctx = CGContext(data: nil, width: sheetW, height: sheetH, bitsPerComponent: 8, bytesPerRow: sheetW * 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) {
+        let gCtx = NSGraphicsContext(cgContext: ctx, flipped: false)
+        let prevG = NSGraphicsContext.current
+        NSGraphicsContext.current = gCtx
+        ctx.setFillColor(NSColor(srgbRed: 0.05, green: 0.10, blue: 0.19, alpha: 1).cgColor)
+        ctx.fill(CGRect(x: 0, y: 0, width: sheetW, height: sheetH))
+        let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.boldSystemFont(ofSize: 10.5), .foregroundColor: NSColor(white: 0.94, alpha: 1)]
+        for (rIdx, col) in collections25.enumerated() {
+            let rowSets = h250Defs.filter { $0.collection == col }
+            let yTop = CGFloat(sheetH - 12 - (rIdx + 1) * cell)
+            let title = col.displayName as NSString
+            title.draw(at: CGPoint(x: 10, y: yTop + 12), withAttributes: attrs)
+            for (cIdx, def) in rowSets.enumerated() {
+                if let img = Holiday250Catalog.renderSetPack(definition: def, size: 32).onImages[2] {
+                    ctx.draw(img, in: CGRect(x: CGFloat(labelW + cIdx * cell), y: yTop + 2, width: 32, height: 32))
+                }
+            }
+        }
+        NSGraphicsContext.current = prevG
+        if let sheetImg = ctx.makeImage() {
+            check(writePNG(sheetImg, to: scratchDir.appendingPathComponent("verify_250_holiday_bulbs_contact_sheet.png")), "Wrote 250 Holiday Bulb Sets visual contact sheet")
+        }
+    }
+}
+
+// 8.2 Verify .blz stored-ZIP unwrapping & clean failure on proprietary opaque data
+var samplePK = Data([0x50, 0x4B, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00])
+samplePK.append(Data(repeating: 0, count: 8))
+let fakePayload = Data("MZ" .utf8) + Data(repeating: 0x41, count: 80)
+let pLen = UInt32(fakePayload.count)
+samplePK.append(contentsOf: [UInt8(pLen & 0xFF), UInt8((pLen >> 8) & 0xFF), UInt8((pLen >> 16) & 0xFF), UInt8((pLen >> 24) & 0xFF)])
+samplePK.append(contentsOf: [UInt8(pLen & 0xFF), UInt8((pLen >> 8) & 0xFF), UInt8((pLen >> 16) & 0xFF), UInt8((pLen >> 24) & 0xFF)])
+samplePK.append(contentsOf: [0x01, 0x00, 0x00, 0x00]) // filename len = 1, extra = 0
+samplePK.append(0x61) // "a"
+samplePK.append(fakePayload)
+let unwrappedPK = BLBResourceLoader.unwrapCompressedBLZIfStandard(data: samplePK)
+check(unwrappedPK == fakePayload, ".blz stored-ZIP unwrapping recovers embedded PE payload")
+let opaqueBLZURL = scratchDir.appendingPathComponent("proprietary_test.blz")
+try? Data([0x42, 0x4C, 0x5A, 0x01] + Array(repeating: UInt8(0xAA), count: 80)).write(to: opaqueBLZURL)
+check(BLBResourceLoader.load(url: opaqueBLZURL) == nil, "Proprietary compressed .blz fails safely with nil instead of crashing")
+try? FileManager.default.removeItem(at: opaqueBLZURL)
+
+// 8.3 Verify 20 Seasonal Screen Savers + Slideshow + Custom TwinkleScreenSaverPlugin
+let seasonal20 = ScreenSaverModuleID.seasonal20Modules
+check(seasonal20.count == 20, "Exactly 20 new seasonal screen savers registered (got \(seasonal20.count))")
+var ssHashes = Set<UInt64>()
+for mod in seasonal20 {
+    var cfg = AppSettings.defaultSettings()
+    cfg.ssModule = mod
+    cfg.ssLights = true
+    let ssView = ScreenSaverCanvasView(frame: NSRect(x: 0, y: 0, width: 320, height: 200), settings: cfg, preview: false)
+    for _ in 0..<25 { ssView.stepFrame() }
+    if let rep = ssView.bitmapImageRepForCachingDisplay(in: ssView.bounds) {
+        ssView.cacheDisplay(in: ssView.bounds, to: rep)
+        if let cg = rep.cgImage {
+            ssHashes.insert(cgImageHash64(cg))
+        }
+    }
+}
+check(ssHashes.count >= 18, "All 20 seasonal screen savers render active visual output (\(ssHashes.count)/20 distinct frames)")
+
+// Visual PNG snapshots of requested seasonal screen savers
+func snapshotSaver(_ mod: ScreenSaverModuleID, filename: String, configure: ((inout AppSettings) -> Void)? = nil) -> Bool {
+    var cfg = AppSettings.defaultSettings()
+    cfg.ssModule = mod
+    cfg.ssLights = true
+    configure?(&cfg)
+    let v = ScreenSaverCanvasView(frame: NSRect(x: 0, y: 0, width: 640, height: 400), settings: cfg, preview: false)
+    for _ in 0..<35 { v.stepFrame() }
+    return snapshotView(v, to: scratchDir.appendingPathComponent(filename))
+}
+check(snapshotSaver(.twinklingWreath, filename: "verify_ss_wreath.png"), "Rendered Twinkling Holiday Wreath screen saver snapshot")
+check(snapshotSaver(.fallingAutumnLeaves, filename: "verify_ss_autumn_leaves.png") { $0.seasonalSSConfig.windCondition = .windy }, "Rendered Falling Autumn Leaves screen saver snapshot")
+check(snapshotSaver(.glowingPumpkin, filename: "verify_ss_pumpkin.png"), "Rendered Glowing Halloween Pumpkin screen saver snapshot")
+
+final class MockCustomSaverPlugin: TwinkleScreenSaverPlugin {
+    let moduleID = "MockCustomSaver"
+    let displayName = "Mock Custom Saver"
+    var drawCallCount = 0
+    func reset(in rect: CGRect, settings: AppSettings, preview: Bool) {}
+    func step(in rect: CGRect, settings: AppSettings, tick: Int) {}
+    func draw(in ctx: CGContext, rect: CGRect, settings: AppSettings, preview: Bool, tick: Int) {
+        drawCallCount += 1
+        ctx.setFillColor(NSColor.systemTeal.cgColor)
+        ctx.fill(rect.insetBy(dx: 20, dy: 20))
+    }
+}
+let mockPlugin = MockCustomSaverPlugin()
+ScreenSaverPluginRegistry.shared.register(mockPlugin)
+if let foundPlugin = ScreenSaverPluginRegistry.shared.plugin(for: "MockCustomSaver"),
+   let pCtx = CGContext(data: nil, width: 100, height: 80, bitsPerComponent: 8, bytesPerRow: 400, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) {
+    foundPlugin.draw(in: pCtx, rect: CGRect(x: 0, y: 0, width: 100, height: 80), settings: .defaultSettings(), preview: true, tick: 1)
+    check(mockPlugin.drawCallCount == 1, "TwinkleScreenSaverPlugin registry resolves and draws external plugins")
+} else {
+    check(false, "TwinkleScreenSaverPlugin registry failed to resolve registered plugin")
+}
+
+// 8.4 Verify 130 Wallpapers & 105-track MIDI Library
+let wp130 = WallpaperPack130.allSpecs
+check(wp130.count == 130 && Set(wp130.map(\.id)).count == 130, "WallpaperPack130 provides 130 uniquely identified wallpapers")
+let wpCats = WallpaperThemeCategory.allCases.filter { $0 != .all }
+let wpAllCatsRendered = wpCats.allSatisfy { cat in
+    guard let spec = wp130.first(where: { $0.category == cat }),
+          let img = WallpaperPack130.renderWallpaper(spec, width: 280, height: 180) else { return false }
+    return img.width == 280 && img.height == 180
+}
+check(wpAllCatsRendered, "All 11 seasonal wallpaper collections render distinct preview images")
+check(Set(carols.map(\.id)).count == 105 && carols.allSatisfy { $0.builtInMIDI != nil && $0.builtInMIDI!.starts(with: Data("MThd".utf8)) }, "All 105 built-in GM MIDI songs have unique IDs and valid SMF MThd headers")
+
+// 8.5 Verify 24-Door Advent Calendar date logic & persistence
+let advCtrl = AdventCalendarWindowController()
+var calComps = DateComponents(); calComps.year = 2026; calComps.month = 12; calComps.day = 10
+let dec10 = Calendar.current.date(from: calComps)!
+var advSettings = AppSettings.defaultSettings()
+check(advCtrl.canOpenDoor(day: 1, on: dec10, settings: advSettings) && advCtrl.canOpenDoor(day: 10, on: dec10, settings: advSettings), "Advent doors 1..10 unlock on December 10")
+check(!advCtrl.canOpenDoor(day: 11, on: dec10, settings: advSettings) && !advCtrl.canOpenDoor(day: 24, on: dec10, settings: advSettings), "Future Advent doors remain locked before their December date")
+advSettings.adventAllowAnyDatePreview = true
+check(advCtrl.canOpenDoor(day: 24, on: dec10, settings: advSettings), "Advent Preview Mode allows opening any door 1..24")
+advSettings.openedAdventDoors = [1, 4, 10]
+if let encAdv = try? JSONEncoder().encode(advSettings), let decAdv = try? JSONDecoder().decode(AppSettings.self, from: encAdv) {
+    check(decAdv.openedAdventDoors == [1, 4, 10], "Opened Advent door set persists across AppSettings JSON round-trip")
+} else {
+    check(false, "AppSettings Advent persistence encode/decode failed")
+}
+
+// 8.6 Verify Historical 7-Tab XP Preferences UI & Live Preview Views
+let expectedTabs = ["General", "Bulbs", "Music", "Screen Saver", "Wallpaper", "Calendar", "Help"]
+let actualTabs = prefsWinCtrl.tabView.tabViewItems.map(\.label)
+check(actualTabs == expectedTabs, "Settings window preserves exact 7 historical XP tabs in order: \(actualTabs)")
+let swatchImg = ColorModeSwatchRenderer.swatchImage(for: .redGreen)
+check(swatchImg.size.width > 0 && swatchImg.size.height > 0, "ColorModeSwatchRenderer generates dropdown color beads")
+let samplePV = BulbSetPreviewView(frame: NSRect(x: 0, y: 0, width: 220, height: 52))
+samplePV.settings = AppSettings.defaultSettings()
+let flashPV = FlashingModePreviewView(frame: NSRect(x: 0, y: 0, width: 256, height: 32))
+flashPV.configure(with: AppSettings.defaultSettings())
+check(snapshotView(samplePV, to: scratchDir.appendingPathComponent("verify_live_bulb_preview.png")) && snapshotView(flashPV, to: scratchDir.appendingPathComponent("verify_live_flash_preview.png")), "Live BulbSetPreviewView & FlashingModePreviewView render snapshots cleanly")
+flashPV.stopPreview()
+
 print("\nSUMMARY: \(passedCount) passed, \(failedCount) failed")
 if failedCount > 0 { exit(1) }

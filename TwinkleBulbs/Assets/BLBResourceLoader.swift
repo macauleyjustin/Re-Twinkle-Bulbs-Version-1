@@ -1,5 +1,6 @@
 import Foundation
 import CoreGraphics
+import Compression
 
 // MARK: - Bulb Set Metadata & Parsed Assets
 
@@ -15,6 +16,10 @@ public struct BulbSetMetadata: Equatable {
     public var isMonochrome: Bool = false // str[5010] == "1"
     public var isBitmap: Bool = false     // str[5012] == "1"
     public var isOnOnly: Bool = false     // str[5014] == "1" (requires highlight blend for OFF state)
+    public var supportsColorModes: Bool = true
+    public var collection: BulbCollectionCategory = .classicBuiltIn
+    public var designNumber: Int = 0
+    public var isHoliday250: Bool = false
     public var sourceURL: URL? = nil
 }
 
@@ -58,18 +63,53 @@ public final class BLBResourceLoader {
             return LoadedBulbIcons(metadata: meta, sample: icon, bareWire: nil, onImages: onMap, offImages: offMap, brokenImages: [:])
         }
 
-        // Check DOS MZ header
-        guard readU16(data, 0) == 0x5A4D else { return nil }
+        if ext == "blz" {
+            if let decompressed = unwrapCompressedBLZIfStandard(data: data),
+               let loaded = loadFromMemory(data: decompressed, baseName: baseName, sourceURL: url, preferredSize: preferredSize, highlightRGB: highlightRGB) {
+                return loaded
+            }
+        }
+
+        return loadFromMemory(data: data, baseName: baseName, sourceURL: url, preferredSize: preferredSize, highlightRGB: highlightRGB)
+    }
+
+    private static func loadFromMemory(data: Data, baseName: String, sourceURL: URL, preferredSize: Int, highlightRGB: (UInt8, UInt8, UInt8)) -> LoadedBulbIcons? {
+        guard data.count >= 64, readU16(data, 0) == 0x5A4D else { return nil }
         let lfanew = Int(readU32(data, 0x3C))
         guard lfanew >= 0 && lfanew + 4 <= data.count else { return nil }
 
         let sig = readU16(data, lfanew)
         if sig == 0x4550 && readU16(data, lfanew + 2) == 0x0000 {
-            // PE32 resource DLL (.blb or PE .icl)
-            return parsePEBulbLibrary(data: data, lfanew: lfanew, fallbackTitle: baseName, sourceURL: url, preferredSize: preferredSize, highlightRGB: highlightRGB)
+            return parsePEBulbLibrary(data: data, lfanew: lfanew, fallbackTitle: baseName, sourceURL: sourceURL, preferredSize: preferredSize, highlightRGB: highlightRGB)
         } else if sig == 0x454E {
-            // 16-bit NE library (e.g. Big Bulbs.icl)
-            return parseNEIconLibrary(data: data, neOff: lfanew, fallbackTitle: baseName, sourceURL: url, preferredSize: preferredSize, highlightRGB: highlightRGB)
+            return parseNEIconLibrary(data: data, neOff: lfanew, fallbackTitle: baseName, sourceURL: sourceURL, preferredSize: preferredSize, highlightRGB: highlightRGB)
+        }
+        return nil
+    }
+
+    public static func unwrapCompressedBLZIfStandard(data: Data) -> Data? {
+        guard data.count >= 6 else { return nil }
+        if data[0] == 0x78 {
+            let maxDst = min(16 * 1024 * 1024, data.count * 24)
+            var out = Data(count: maxDst)
+            let decodedSize = data.subdata(in: 2..<data.count).withUnsafeBytes { srcPtr in
+                out.withUnsafeMutableBytes { dstPtr in
+                    guard let s = srcPtr.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                          let d = dstPtr.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return 0 }
+                    return compression_decode_buffer(d, maxDst, s, data.count - 2, nil, COMPRESSION_ZLIB)
+                }
+            }
+            if decodedSize > 64 { return out.prefix(decodedSize) }
+        }
+        if data[0] == 0x50 && data[1] == 0x4B && data[2] == 0x03 && data[3] == 0x04 && data.count > 30 {
+            let compMethod = readU16(data, 8)
+            let compSize = Int(readU32(data, 18))
+            let nameLen = Int(readU16(data, 26))
+            let extraLen = Int(readU16(data, 28))
+            let payloadStart = 30 + nameLen + extraLen
+            if compMethod == 0 && compSize > 64 && payloadStart + compSize <= data.count {
+                return data.subdata(in: payloadStart..<(payloadStart + compSize))
+            }
         }
         return nil
     }

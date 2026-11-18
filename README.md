@@ -1,6 +1,18 @@
-# Twinkle Bulbs 6.0 for macOS
+# Re: Twinkle Bulbs (macOS) — Complete Holiday Edition (v1.0.5)
 
-Clean-room native Swift + AppKit reconstruction of Barefoot Productions **Twinkle Bulbs v6.0**, faithfully reproducing its bulb layout math, all 21 color modes, 9 flashing algorithms, exact millisecond timings, inward rotation transforms, 4 built-in screen savers, desktop/floating/menu-bar overlay integration, music/SFX, holiday countdown calendar, tips, and wallpaper rotation.
+Clean-room native Swift + AppKit reconstruction of Barefoot Productions **Twinkle Bulbs v6.0**, faithfully reproducing its bulb layout math, all 21 color modes, 9 flashing algorithms, exact millisecond timings, inward rotation transforms, built-in screen savers, desktop/floating/menu-bar overlay integration, authentic multi-track GM MIDI jukebox, holiday countdown calendar, tips, and wallpaper rotation.
+
+---
+
+## What's New in v1.0.5 (Complete Holiday Edition)
+
+- **250 Distinct Holiday Bulb Sets:** 25 themed collections × 10 original vector bulb designs rendered in both 32×32 and 48×48 px, complete with distinct ON, OFF (with highlight dim blend), Broken, and Bare Wire states plus inward rotation for all screen edges.
+- **20 New Seasonal Screen Savers + Extensible Plugin API:** From *Twinkling Holiday Wreath* and *Falling Autumn Leaves* to *Glowing Halloween Pumpkin* and *Beach Sunset*, plus external plugin support via `TwinkleScreenSaverPlugin`.
+- **Restored Historical Windows XP-Era Settings UI:** Faithful 7-tab layout (`General`, `Bulbs`, `Music`, `Screen Saver`, `Wallpaper`, `Calendar`, `Help`) with `#ECE9D8` dialog styling, searchable/categorized Bulb Sets table with favorites and recently used filtering, plus live interactive previews (`BulbSetPreviewView`, `FlashingModePreviewView`, `ColorModeSwatchRenderer`).
+- **130 Seasonal Desktop Wallpapers:** High-resolution procedural seasonal desktop wallpapers across 11 themed collections with per-monitor configuration.
+- **105 Multi-Track GM MIDI Library:** Rich multi-channel Christmas carol and holiday arrangements rendered through macOS `AVAudioUnitSampler` and `gs_instruments.dls`, plus custom directory `.mid`, `.rmi`, `.wav`, and `.mp3` jukebox playback.
+- **Interactive 24-Door Advent Calendar:** Count down the days of December with unlockable holiday greetings and art, persisting across launches with an optional preview mode.
+- **Advanced Modern Christmas Lighting Engine:** 15 modern programmable effects, customizable color palettes, and MIDI-reactive illumination modes while keeping original classic behavior as the default.
 
 ---
 

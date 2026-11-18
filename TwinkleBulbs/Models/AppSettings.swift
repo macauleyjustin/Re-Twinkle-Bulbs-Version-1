@@ -235,19 +235,77 @@ public enum TrayClickAction: Int, CaseIterable, Codable, Identifiable {
 }
 
 public enum ScreenSaverModuleID: String, CaseIterable, Codable, Identifiable {
+    // 4 Original Twinkle Bulbs v6.0 Classic Screen Savers
     case blank = "blank"
     case clock = "clock"
     case fireworks = "fireworks"
     case snowfall = "snowfall"
 
+    // Documented Historical CD Slideshow Module
+    case wallpaperSlideshow = "wallpaper_slideshow"
+
+    // 20 New Complete Holiday Edition Seasonal Screen Savers
+    case twinklingWreath = "twinkling_wreath"
+    case christmasTreeGlow = "christmas_tree_glow"
+    case snowfallVillage = "snowfall_village"
+    case fireplaceChristmas = "fireplace_christmas"
+    case winterFrost = "winter_frost"
+    case gingerbreadVillage = "gingerbread_village"
+    case fallingAutumnLeaves = "falling_autumn_leaves"
+    case glowingPumpkin = "glowing_pumpkin"
+    case hauntedHouse = "haunted_house"
+    case autumnForest = "autumn_forest"
+    case harvestPumpkinPatch = "harvest_pumpkin_patch"
+    case springBlossoms = "spring_blossoms"
+    case springRain = "spring_rain"
+    case easterGarden = "easter_garden"
+    case summerFireflies = "summer_fireflies"
+    case summerNightSky = "summer_night_sky"
+    case beachSunset = "beach_sunset"
+    case valentineHearts = "valentine_hearts"
+    case newYearsCelebration = "new_years_celebration"
+    case patrioticCelebration = "patriotic_celebration"
+
     public var id: String { rawValue }
+
+    public var isClassicModule: Bool {
+        switch self {
+        case .blank, .clock, .fireworks, .snowfall: return true
+        default: return false
+        }
+    }
+
+    public static var seasonal20Modules: [ScreenSaverModuleID] {
+        allCases.filter { !$0.isClassicModule && $0 != .wallpaperSlideshow }
+    }
 
     public var displayName: String {
         switch self {
-        case .blank: return "Blank Screen"
-        case .clock: return "Clock"
-        case .fireworks: return "Fireworks"
-        case .snowfall: return "Snowfall"
+        case .blank: return "Blank Screen (Classic)"
+        case .clock: return "Clock (Classic)"
+        case .fireworks: return "Fireworks (Classic)"
+        case .snowfall: return "Snowfall (Classic)"
+        case .wallpaperSlideshow: return "Wallpaper Slideshow (CD)"
+        case .twinklingWreath: return "1. Twinkling Christmas Wreath"
+        case .christmasTreeGlow: return "2. Christmas Tree Glow"
+        case .snowfallVillage: return "3. Snowfall Village"
+        case .fireplaceChristmas: return "4. Fireplace Christmas"
+        case .winterFrost: return "5. Winter Frost"
+        case .gingerbreadVillage: return "6. Gingerbread Village"
+        case .fallingAutumnLeaves: return "7. Falling Autumn Leaves"
+        case .glowingPumpkin: return "8. Glowing Halloween Pumpkin"
+        case .hauntedHouse: return "9. Haunted House"
+        case .autumnForest: return "10. Autumn Forest"
+        case .harvestPumpkinPatch: return "11. Harvest Pumpkin Patch"
+        case .springBlossoms: return "12. Spring Blossoms"
+        case .springRain: return "13. Spring Rain"
+        case .easterGarden: return "14. Easter Garden"
+        case .summerFireflies: return "15. Summer Fireflies"
+        case .summerNightSky: return "16. Summer Night Sky"
+        case .beachSunset: return "17. Beach Sunset"
+        case .valentineHearts: return "18. Valentine's Hearts"
+        case .newYearsCelebration: return "19. New Year's Celebration"
+        case .patrioticCelebration: return "20. Patriotic Celebration"
         }
     }
 }
@@ -400,6 +458,82 @@ public struct AppSettings: Codable, Equatable {
     public var ssMusic: Bool = false
     public var musicPlayMode: Int = 0 // 0=Sequential, 1=Random
     public var enabledTrackIDs: [String] = []
+
+    // Version 2 Music & Lighting Extensions (Optional backing keeps v1 JSON 100% backward-compatible)
+    private var v2MusicRepeatMode: MusicRepeatMode? = nil
+    private var v2MusicTrackDelaySeconds: Double? = nil
+    private var v2MusicVolume: Double? = nil
+    private var v2MusicDirectoryPath: String? = nil
+    private var v2CustomSoundBankPath: String? = nil
+    private var v2LightingCategory: LightingEngineCategory? = nil
+    private var v2ModernEffects: ModernEffectsConfig? = nil
+
+    public var musicRepeatMode: MusicRepeatMode {
+        get { v2MusicRepeatMode ?? .repeatAll }
+        set { v2MusicRepeatMode = newValue }
+    }
+    public var musicTrackDelaySeconds: Double {
+        get { v2MusicTrackDelaySeconds ?? 0.5 }
+        set { v2MusicTrackDelaySeconds = max(0.0, min(15.0, newValue)) }
+    }
+    public var musicVolume: Double {
+        get { v2MusicVolume ?? 0.85 }
+        set { v2MusicVolume = max(0.0, min(1.0, newValue)) }
+    }
+    public var musicDirectoryPath: String {
+        get { v2MusicDirectoryPath ?? "" }
+        set { v2MusicDirectoryPath = newValue }
+    }
+    public var customSoundBankPath: String {
+        get { v2CustomSoundBankPath ?? "" }
+        set { v2CustomSoundBankPath = newValue }
+    }
+    public var lightingCategory: LightingEngineCategory {
+        get { v2LightingCategory ?? .classic }
+        set { v2LightingCategory = newValue }
+    }
+    public var modernEffects: ModernEffectsConfig {
+        get { v2ModernEffects ?? ModernEffectsConfig() }
+        set { v2ModernEffects = newValue }
+    }
+
+    // Complete Holiday Edition Extensions (Optional backing preserves v1/v2 JSON compatibility)
+    private var v3SeasonalSSConfig: SeasonalScreenSaverConfig? = nil
+    private var v3OpenedAdventDoors: [Int]? = nil
+    private var v3AdventPreviewAnyDate: Bool? = nil
+    private var v3FavoriteBulbSetIDs: [String]? = nil
+    private var v3RecentBulbSetIDs: [String]? = nil
+    private var v3FavoriteWallpaperIDs: [String]? = nil
+    private var v3ReduceMotion: Bool? = nil
+
+    public var seasonalSSConfig: SeasonalScreenSaverConfig {
+        get { v3SeasonalSSConfig ?? SeasonalScreenSaverConfig() }
+        set { v3SeasonalSSConfig = newValue }
+    }
+    public var openedAdventDoors: Set<Int> {
+        get { Set(v3OpenedAdventDoors ?? []) }
+        set { v3OpenedAdventDoors = Array(newValue).sorted() }
+    }
+    public var adventAllowAnyDatePreview: Bool {
+        get { v3AdventPreviewAnyDate ?? false }
+        set { v3AdventPreviewAnyDate = newValue }
+    }
+    public var favoriteBulbSetIDs: [String] {
+        get { v3FavoriteBulbSetIDs ?? [] }
+        set { v3FavoriteBulbSetIDs = newValue }
+    }
+    public var recentBulbSetIDs: [String] {
+        get { v3RecentBulbSetIDs ?? [] }
+        set { v3RecentBulbSetIDs = Array(newValue.prefix(20)) }
+    }
+    public var favoriteWallpaperIDs: [String] {
+        get { v3FavoriteWallpaperIDs ?? [] }
+        set { v3FavoriteWallpaperIDs = newValue }
+    }
+    public var reduceMotion: Bool {
+        get { v3ReduceMotion ?? false }
+        set { v3ReduceMotion = newValue }
+    }
 
     // Screen Saver (DIALOG/134)
     public var ssModule: ScreenSaverModuleID = .blank

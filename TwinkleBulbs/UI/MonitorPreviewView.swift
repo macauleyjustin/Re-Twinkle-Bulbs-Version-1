@@ -6,6 +6,7 @@ final class MonitorPreviewView: NSView {
     override var isFlipped: Bool { true }
 
     private let engine = BulbEngine()
+    private let modernEngine = ModernLightingEngine()
     private var timer: Timer?
     private var settings: AppSettings = .defaultSettings()
 
@@ -16,15 +17,21 @@ final class MonitorPreviewView: NSView {
         let screenRect = previewScreenRect()
         let virtualW = Int(max(320, screenRect.width * 2))
         let virtualH = Int(max(220, screenRect.height * 2))
-        engine.configure(bounds: CGRect(x: 0, y: 0, width: virtualW, height: virtualH), settings: previewSettings, nowMs: nowMs())
+        let vBounds = CGRect(x: 0, y: 0, width: virtualW, height: virtualH)
+        let t = nowMs()
+        engine.configure(bounds: vBounds, settings: previewSettings, nowMs: t)
+        modernEngine.configure(bounds: vBounds, settings: previewSettings, nowMs: t)
         needsDisplay = true
 
-        if timer == nil {
-            timer = Timer.scheduledTimer(withTimeInterval: 0.050, repeats: true) { [weak self] _ in
-                guard let self else { return }
-                if self.engine.tick(nowMs: self.nowMs()) {
-                    self.needsDisplay = true
-                }
+        timer?.invalidate()
+        let interval = settings.lightingCategory == .modern ? 0.033 : 0.050
+        timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            if self.settings.lightingCategory == .modern {
+                self.modernEngine.tick(nowMs: self.nowMs())
+                self.needsDisplay = true
+            } else if self.engine.tick(nowMs: self.nowMs()) {
+                self.needsDisplay = true
             }
         }
     }
@@ -74,7 +81,11 @@ final class MonitorPreviewView: NSView {
             ctx.scaleBy(x: scrRect.width / vw, y: scrRect.height / vh)
             var ps = settings
             ps.bulbSize = .normal
-            BulbCanvasView.drawSlots(engine.slots, settings: ps, in: ctx)
+            if settings.lightingCategory == .modern {
+                BulbCanvasView.drawModernStates(modernEngine.states, settings: ps, in: ctx)
+            } else {
+                BulbCanvasView.drawSlots(engine.slots, settings: ps, in: ctx)
+            }
         }
         ctx.restoreGState()
     }

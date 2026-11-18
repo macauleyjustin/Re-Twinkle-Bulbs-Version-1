@@ -59,6 +59,8 @@ public final class BulbArtworkRegistry: ObservableObject {
     @Published public private(set) var availableSets: [BulbSetMetadata] = []
     private var loadedByID: [String: LoadedBulbIcons] = [:]
     private var rotatedCache: [String: CGImage] = [:]
+    private var modernTintCache: [String: CGImage] = [:]
+    private var thumbnailCache: [String: CGImage] = [:]
     private var lastHighlightKey: String = ""
     private var lastSize: Int = 32
 
@@ -72,10 +74,12 @@ public final class BulbArtworkRegistry: ObservableObject {
         reloadAllSets(size: 32, highlightHex: "#000080")
     }
 
-    func reloadAllSets(size: Int = 32, highlightHex: String = "#000080") {
+    public func reloadAllSets(size: Int = 32, highlightHex: String = "#000080") {
         let keyChanged = (lastHighlightKey != highlightHex || lastSize != size)
         if keyChanged {
             rotatedCache.removeAll()
+            modernTintCache.removeAll()
+            thumbnailCache.removeAll()
             lastHighlightKey = highlightHex
             lastSize = size
         }
@@ -84,16 +88,35 @@ public final class BulbArtworkRegistry: ObservableObject {
         var newMeta: [BulbSetMetadata] = []
         var newLoaded: [String: LoadedBulbIcons] = [:]
 
-        // 1. Built-in clean-room sets
+        // 1. Built-in 15 Classic v6.0 clean-room sets
         for style in BuiltInStyle.allCases {
             let set = synthesizeBuiltInSet(style: style, size: size, highlightRGB: hl)
             newMeta.append(set.metadata)
             newLoaded[set.metadata.id] = set
         }
 
-        // 2. User-imported .blb / .icl / .ico sets from Application Support (if present)
+        // 2. Register all 250 Complete Holiday Edition sets (synthesized lazily per selected size for fast startup)
+        for def in Holiday250Catalog.allDefinitions {
+            newMeta.append(BulbSetMetadata(
+                id: def.id,
+                title: def.title,
+                author: "Twinkle Bulbs Complete Holiday Edition",
+                version: "7.0",
+                comment: "Collection \(def.collection.displayName) — Design #\(def.number) of 250",
+                isMonochrome: !def.tintable,
+                isBitmap: false,
+                isOnOnly: false,
+                supportsColorModes: def.tintable,
+                collection: def.collection,
+                designNumber: def.number,
+                isHoliday250: true,
+                sourceURL: nil
+            ))
+        }
+
+        // 3. User-imported .blb / .icl / .ico / .blz sets from Application Support (if present)
         if let files = try? FileManager.default.contentsOfDirectory(at: Self.importedBulbsDirectory, includingPropertiesForKeys: nil) {
-            let validExts = Set(["blb", "icl", "ico"])
+            let validExts = Set(["blb", "icl", "ico", "blz"])
             for file in files.sorted(by: { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }) {
                 guard validExts.contains(file.pathExtension.lowercased()) else { continue }
                 if let custom = BLBResourceLoader.load(url: file, preferredSize: size, highlightRGB: hl) {
@@ -110,24 +133,52 @@ public final class BulbArtworkRegistry: ObservableObject {
 
         DispatchQueue.main.async {
             self.availableSets = newMeta
-            self.loadedByID = newLoaded
+            for (k, v) in newLoaded { self.loadedByID[k] = v }
         }
         // Also update synchronously for headless / init calls
         self.availableSets = newMeta
         self.loadedByID = newLoaded
     }
 
-    func metadata(for id: String) -> BulbSetMetadata? {
-        if let exact = loadedByID[id]?.metadata { return exact }
-        return loadedByID.values.first(where: { $0.metadata.title.caseInsensitiveCompare(id) == .orderedSame })?.metadata
+    public func ensurePackLoaded(_ id: String) -> LoadedBulbIcons? {
+        let resolved = resolveSetID(id)
+        if let existing = loadedByID[resolved] { return existing }
+        if let def = Holiday250Catalog.definition(for: resolved) {
+            let pack = Holiday250Catalog.renderSetPack(definition: def, size: lastSize)
+            loadedByID[def.id] = pack
+            return pack
+        }
+        return loadedByID[BuiltInStyle.outdoor.rawValue]
     }
 
-    func sampleImage(for id: String) -> CGImage? {
+    public func metadata(for id: String) -> BulbSetMetadata? {
+        let resolved = resolveSetID(id)
+        if let m = availableSets.first(where: { $0.id == resolved }) { return m }
+        return loadedByID[resolved]?.metadata
+    }
+
+    public func sampleImage(for id: String) -> CGImage? {
         let resolvedID = resolveSetID(id)
-        return loadedByID[resolvedID]?.sample ?? loadedByID[resolvedID]?.onImages[2]
+        if let hit = thumbnailCache[resolvedID] { return hit }
+        if let loaded = loadedByID[resolvedID], let img = loaded.sample ?? loaded.onImages[2] {
+            thumbnailCache[resolvedID] = img
+            return img
+        }
+        if let def = Holiday250Catalog.definition(for: resolvedID) {
+            let colorTuple = Self.slotColors[2]
+            let primary = NSColor(srgbRed: CGFloat(colorTuple.onCore.0)/255, green: CGFloat(colorTuple.onCore.1)/255, blue: CGFloat(colorTuple.onCore.2)/255, alpha: 1)
+            let glow = NSColor(srgbRed: CGFloat(colorTuple.onGlow.0)/255, green: CGFloat(colorTuple.onGlow.1)/255, blue: CGFloat(colorTuple.onGlow.2)/255, alpha: 1)
+            let thumb = Holiday250Catalog.makeTile(size: 32) { ctx, s in
+                Holiday250Catalog.drawTopWireAndHook(ctx: ctx, s: s, drawHook: true)
+                Holiday250Catalog.drawDesign(ctx: ctx, number: def.number, s: s, primary: primary, glow: glow, lit: true, broken: false)
+            }
+            thumbnailCache[resolvedID] = thumb
+            return thumb
+        }
+        return ensurePackLoaded(resolvedID)?.sample
     }
 
-    func resolveSetID(_ name: String) -> String {
+    public func resolveSetID(_ name: String) -> String {
         if loadedByID[name] != nil { return name }
         let stem = (name as NSString).deletingPathExtension
         if let match = availableSets.first(where: {
@@ -156,7 +207,7 @@ public final class BulbArtworkRegistry: ObservableObject {
             setID = resolveSetID(settings.bulbSetName)
         }
 
-        guard let pack = loadedByID[setID] else { return nil }
+        guard let pack = ensurePackLoaded(setID) else { return nil }
         let angle = slot.edge.inwardRotationDegrees(inward: settings.inward)
 
         switch slot.visualState {
@@ -807,5 +858,116 @@ public final class BulbArtworkRegistry: ObservableObject {
             UInt8(min(255, max(0, Int(round(rgb.greenComponent * 255))))),
             UInt8(min(255, max(0, Int(round(rgb.blueComponent * 255)))))
         )
+    }
+
+    // MARK: - Modern Lighting Sprite Tint Pipeline (Preserves Exact Bulb Artwork, Wire & Socket)
+
+    public func modernImages(for state: ModernBulbState, settings: AppSettings) -> (base: CGImage?, lit: CGImage?) {
+        let size = settings.bulbSize.pixels
+        let hlKey = settings.sysColorHighlight ? "#000080" : settings.highlightColorHex
+        if size != lastSize || hlKey != lastHighlightKey {
+            reloadAllSets(size: size, highlightHex: hlKey)
+        }
+
+        let setID: String
+        if settings.mixBulbs && !settings.mixedSetNames.isEmpty {
+            let pool = settings.mixedSetNames
+            setID = resolveSetID(pool[state.index % pool.count])
+        } else {
+            setID = resolveSetID(settings.bulbSetName)
+        }
+        guard let pack = ensurePackLoaded(setID) else { return (nil, nil) }
+        let angle = state.edge.inwardRotationDegrees(inward: settings.inward)
+
+        if state.isMissing {
+            if state.isBareWire, let w = pack.bareWire {
+                return (cachedRotated(image: w, cacheKey: "\(setID)|wire|\(size)|\(angle)", degrees: angle, size: size), nil)
+            }
+            return (nil, nil)
+        }
+        if state.isBareWire {
+            guard let w = pack.bareWire else { return (nil, nil) }
+            return (cachedRotated(image: w, cacheKey: "\(setID)|wire|\(size)|\(angle)", degrees: angle, size: size), nil)
+        }
+        if state.isBroken {
+            let brk = pack.brokenImages[2] ?? pack.brokenImages[0] ?? pack.offImages[2] ?? pack.onImages[6]
+            guard let brk else { return (nil, nil) }
+            return (cachedRotated(image: brk, cacheKey: "\(setID)|brk|0|\(size)|\(angle)", degrees: angle, size: size), nil)
+        }
+
+        let offRaw = pack.offImages[6] ?? pack.offImages[2] ?? pack.offImages[0]
+        let baseImg = offRaw.map { cachedRotated(image: $0, cacheKey: "\(setID)|modoff|\(size)|\(angle)", degrees: angle, size: size) }
+
+        if state.isBurnedOut || state.intensity <= 0.01 {
+            return (baseImg, nil)
+        }
+
+        // Quantize RGB into 13 discrete levels per channel (~2197 hues) so 60fps waves reuse cached CGImages smoothly
+        let qr = max(0, min(12, Int(round(state.r * 12.0))))
+        let qg = max(0, min(12, Int(round(state.g * 12.0))))
+        let qb = max(0, min(12, Int(round(state.b * 12.0))))
+        let cacheKey = "\(setID)|mod|\(qr)_\(qg)_\(qb)|\(size)|\(angle)"
+
+        if let hit = modernTintCache[cacheKey] {
+            return (baseImg, hit)
+        }
+
+        guard let whiteOn = pack.onImages[6] ?? pack.onImages[4] ?? pack.onImages[2] ?? pack.onImages[0] else {
+            return (baseImg, nil)
+        }
+        let prepared = (whiteOn.width == size && whiteOn.height == size) ? whiteOn : Self.scaleImage(whiteOn, to: CGSize(width: size, height: size))
+        let tinted = Self.tintSpriteGlass(prepared, r: Double(qr) / 12.0, g: Double(qg) / 12.0, b: Double(qb) / 12.0)
+        let rotated = Self.rotatePixelExact(tinted, degrees: angle)
+
+        if modernTintCache.count > 1800 {
+            modernTintCache.removeAll(keepingCapacity: true)
+        }
+        modernTintCache[cacheKey] = rotated
+        return (baseImg, rotated)
+    }
+
+    private static func tintSpriteGlass(_ src: CGImage, r tr: Double, g tg: Double, b tb: Double) -> CGImage {
+        let w = src.width, h = src.height
+        var px = [UInt8](repeating: 0, count: w * h * 4)
+        let cs = CGColorSpaceCreateDeviceRGB()
+        guard let ctx = CGContext(
+            data: &px, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+            space: cs, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return src }
+        ctx.draw(src, in: CGRect(x: 0, y: 0, width: w, height: h))
+
+        for y in 0..<h {
+            for x in 0..<w {
+                let off = (y * w + x) * 4
+                let a = Double(px[off + 3])
+                guard a > 0 else { continue }
+                // Unpremultiply safely
+                let invA = 255.0 / a
+                let pr = min(255.0, Double(px[off]) * invA)
+                let pg = min(255.0, Double(px[off + 1]) * invA)
+                let pb = min(255.0, Double(px[off + 2]) * invA)
+
+                // Preserve green top wire & dark socket cap intact
+                let isTopWireGreen = (y < h / 3) && (pg > pr + 18.0) && (pg > pb + 18.0)
+                let isDarkSocket = (y < (h * 42) / 100) && (max(pr, max(pg, pb)) < 75.0)
+                if isTopWireGreen || isDarkSocket { continue }
+
+                // Tint luminous glass pixels while retaining white specular shine
+                let luma = max(pr, max(pg, pb)) / 255.0
+                let minCh = min(pr, min(pg, pb)) / 255.0
+                let whiteShine = max(0.0, min(1.0, (minCh - 0.72) / 0.28))
+
+                let nr = min(1.0, luma * tr + whiteShine * 0.45)
+                let ng = min(1.0, luma * tg + whiteShine * 0.45)
+                let nb = min(1.0, luma * tb + whiteShine * 0.45)
+
+                let alphaScale = a / 255.0
+                px[off]     = UInt8(min(255, max(0, Int(round(nr * 255.0 * alphaScale)))))
+                px[off + 1] = UInt8(min(255, max(0, Int(round(ng * 255.0 * alphaScale)))))
+                px[off + 2] = UInt8(min(255, max(0, Int(round(nb * 255.0 * alphaScale)))))
+            }
+        }
+
+        return ctx.makeImage() ?? src
     }
 }

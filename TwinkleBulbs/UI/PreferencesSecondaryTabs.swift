@@ -3,9 +3,14 @@ import Cocoa
 final class PreferencesSecondaryTabsCoordinator: NSObject {
     private unowned let owner: PreferencesWindowController
 
-    // Music tab
+    // Music tab (Restored Programmable Jukebox & Sound Bank)
     private let musicEnableCheck = NSButton(checkboxWithTitle: "Enable Background Holiday Music", target: nil, action: nil)
     private let musicOrderPopup = NSPopUpButton()
+    private let musicRepeatPopup = NSPopUpButton()
+    private let musicTrackDelayField = NSTextField()
+    private let musicVolumeSlider = NSSlider(value: 0.85, minValue: 0.0, maxValue: 1.0, target: nil, action: nil)
+    private let musicDirField = NSTextField()
+    private let soundBankLabel = NSTextField(labelWithString: "Sound Bank: Built-in GS Wavetable")
     private let musicOnlySSCheck = NSButton(checkboxWithTitle: "Play Music Only During Screen Saver", target: nil, action: nil)
     private let musicPauseCheck = NSButton(checkboxWithTitle: "Auto-Pause After (min):", target: nil, action: nil)
     private let musicPauseField = NSTextField()
@@ -31,11 +36,15 @@ final class PreferencesSecondaryTabsCoordinator: NSObject {
     private var ssMiniTimer: Timer?
 
     // Wallpaper tab
+    private let wpCategoryPopup = NSPopUpButton()
     private let wallpaperPopup = NSPopUpButton()
+    private let wpFavBtn = NSButton(title: "☆ Favorite", target: nil, action: nil)
+    private let wpMonitorPopup = NSPopUpButton()
     private let wpStylePopup = NSPopUpButton()
     private let wpAutoRotateCheck = NSButton(checkboxWithTitle: "Auto-Rotate Wallpapers Every (min):", target: nil, action: nil)
     private let wpFreqField = NSTextField()
     private let wpPreviewImage = NSImageView()
+    private let wpCountLabel = NSTextField(labelWithString: "130 Seasonal Wallpapers")
 
     // Calendar tab
     private let holidayPopup = NSPopUpButton()
@@ -60,42 +69,84 @@ final class PreferencesSecondaryTabsCoordinator: NSObject {
         item.label = "Music"
         let view = NSView(frame: NSRect(x: 0, y: 0, width: 710, height: 440))
 
-        let box = NSBox(frame: NSRect(x: 16, y: 120, width: 678, height: 300))
-        box.title = "Holiday Music Playback"
+        let box = NSBox(frame: NSRect(x: 16, y: 14, width: 678, height: 412))
+        box.title = "Holiday Music Jukebox (MIDI / RMI / MP3 / WAV / AIFF)"
 
-        musicEnableCheck.frame = NSRect(x: 16, y: 244, width: 320, height: 22)
+        musicEnableCheck.frame = NSRect(x: 16, y: 360, width: 300, height: 22)
         musicEnableCheck.target = self; musicEnableCheck.action = #selector(controlChanged)
 
-        let lblTrack = NSTextField(labelWithString: "Selected Song:")
-        lblTrack.frame = NSRect(x: 16, y: 204, width: 120, height: 18)
-        musicPopup.frame = NSRect(x: 140, y: 200, width: 340, height: 26)
+        let dirLbl = NSTextField(labelWithString: "Music Folder:")
+        dirLbl.frame = NSRect(x: 16, y: 326, width: 100, height: 18)
+        musicDirField.frame = NSRect(x: 120, y: 324, width: 320, height: 22)
+        musicDirField.placeholderString = "(Optional custom folder; also scans ImportedMusic)"
+        let browseDirBtn = NSButton(title: "Choose Folder...", target: self, action: #selector(chooseMusicDirectory))
+        browseDirBtn.frame = NSRect(x: 448, y: 321, width: 120, height: 26)
+        let clearDirBtn = NSButton(title: "Clear", target: self, action: #selector(clearMusicDirectory))
+        clearDirBtn.frame = NSRect(x: 574, y: 321, width: 70, height: 26)
 
-        let playBtn = NSButton(title: "Play Selected", target: self, action: #selector(playSelectedTrack))
-        playBtn.frame = NSRect(x: 16, y: 156, width: 120, height: 28)
+        let lblTrack = NSTextField(labelWithString: "Playlist Track:")
+        lblTrack.frame = NSRect(x: 16, y: 286, width: 100, height: 18)
+        musicPopup.frame = NSRect(x: 120, y: 282, width: 360, height: 26)
+        let impBtn = NSButton(title: "Open / Import Files...", target: self, action: #selector(importMusicFiles))
+        impBtn.frame = NSRect(x: 488, y: 282, width: 156, height: 26)
+
+        let playBtn = NSButton(title: "Play", target: self, action: #selector(playSelectedTrack))
+        playBtn.frame = NSRect(x: 16, y: 240, width: 76, height: 28)
+        let pauseBtn = NSButton(title: "Pause / Resume", target: self, action: #selector(pauseResumeMusic))
+        pauseBtn.frame = NSRect(x: 98, y: 240, width: 124, height: 28)
         let stopBtn = NSButton(title: "Stop", target: self, action: #selector(stopMusic))
-        stopBtn.frame = NSRect(x: 144, y: 156, width: 84, height: 28)
-        let nextBtn = NSButton(title: "Next Track", target: self, action: #selector(nextTrack))
-        nextBtn.frame = NSRect(x: 236, y: 156, width: 100, height: 28)
-        let impBtn = NSButton(title: "Import .MID / Audio...", target: self, action: #selector(importMusicFiles))
-        impBtn.frame = NSRect(x: 348, y: 156, width: 160, height: 28)
+        stopBtn.frame = NSRect(x: 228, y: 240, width: 76, height: 28)
+        let prevBtn = NSButton(title: "Previous", target: self, action: #selector(previousTrack))
+        prevBtn.frame = NSRect(x: 310, y: 240, width: 88, height: 28)
+        let nextBtn = NSButton(title: "Next", target: self, action: #selector(nextTrack))
+        nextBtn.frame = NSRect(x: 404, y: 240, width: 78, height: 28)
+
+        let volLbl = NSTextField(labelWithString: "Volume:")
+        volLbl.frame = NSRect(x: 16, y: 198, width: 96, height: 18)
+        musicVolumeSlider.frame = NSRect(x: 120, y: 196, width: 210, height: 20)
+        musicVolumeSlider.isContinuous = true
+        musicVolumeSlider.target = self; musicVolumeSlider.action = #selector(volumeSliderChanged)
+
+        let delayLbl = NSTextField(labelWithString: "Delay Between Tracks (s):")
+        delayLbl.frame = NSRect(x: 360, y: 198, width: 166, height: 18)
+        musicTrackDelayField.frame = NSRect(x: 530, y: 196, width: 64, height: 22)
 
         let ordLbl = NSTextField(labelWithString: "Play Order:")
-        ordLbl.frame = NSRect(x: 16, y: 114, width: 110, height: 18)
-        musicOrderPopup.addItems(withTitles: ["Sequential", "Random"])
-        musicOrderPopup.frame = NSRect(x: 140, y: 110, width: 160, height: 24)
+        ordLbl.frame = NSRect(x: 16, y: 158, width: 96, height: 18)
+        musicOrderPopup.addItems(withTitles: ["Sequential", "Shuffle (Random)"])
+        musicOrderPopup.frame = NSRect(x: 120, y: 154, width: 170, height: 24)
         musicOrderPopup.target = self; musicOrderPopup.action = #selector(controlChanged)
 
-        musicOnlySSCheck.frame = NSRect(x: 16, y: 74, width: 320, height: 22)
+        let repLbl = NSTextField(labelWithString: "Repeat:")
+        repLbl.frame = NSRect(x: 360, y: 158, width: 60, height: 18)
+        musicRepeatPopup.addItems(withTitles: MusicRepeatMode.allCases.map(\.displayName))
+        musicRepeatPopup.frame = NSRect(x: 424, y: 154, width: 170, height: 24)
+        musicRepeatPopup.target = self; musicRepeatPopup.action = #selector(controlChanged)
+
+        musicOnlySSCheck.frame = NSRect(x: 16, y: 116, width: 290, height: 22)
         musicOnlySSCheck.target = self; musicOnlySSCheck.action = #selector(controlChanged)
-
-        musicPauseCheck.frame = NSRect(x: 16, y: 40, width: 200, height: 22)
+        musicPauseCheck.frame = NSRect(x: 360, y: 116, width: 170, height: 22)
         musicPauseCheck.target = self; musicPauseCheck.action = #selector(controlChanged)
-        musicPauseField.frame = NSRect(x: 220, y: 40, width: 52, height: 22)
+        musicPauseField.frame = NSRect(x: 534, y: 116, width: 52, height: 22)
 
-        nowPlayingLbl.frame = NSRect(x: 16, y: 12, width: 500, height: 18)
+        soundBankLabel.frame = NSRect(x: 16, y: 74, width: 390, height: 18)
+        let bankBtn = NSButton(title: "Select .SF2 / .DLS...", target: self, action: #selector(chooseSoundBank))
+        bankBtn.frame = NSRect(x: 416, y: 70, width: 148, height: 26)
+        let resetBankBtn = NSButton(title: "Use GS Default", target: self, action: #selector(resetSoundBank))
+        resetBankBtn.frame = NSRect(x: 570, y: 70, width: 100, height: 26)
+
+        nowPlayingLbl.frame = NSRect(x: 16, y: 20, width: 640, height: 34)
         nowPlayingLbl.textColor = .secondaryLabelColor
+        nowPlayingLbl.maximumNumberOfLines = 2
 
-        for v: NSView in [musicEnableCheck, lblTrack, musicPopup, playBtn, stopBtn, nextBtn, impBtn, ordLbl, musicOrderPopup, musicOnlySSCheck, musicPauseCheck, musicPauseField, nowPlayingLbl] {
+        for v: NSView in [
+            musicEnableCheck, dirLbl, musicDirField, browseDirBtn, clearDirBtn,
+            lblTrack, musicPopup, impBtn, playBtn, pauseBtn, stopBtn, prevBtn, nextBtn,
+            volLbl, musicVolumeSlider, delayLbl, musicTrackDelayField,
+            ordLbl, musicOrderPopup, repLbl, musicRepeatPopup,
+            musicOnlySSCheck, musicPauseCheck, musicPauseField,
+            soundBankLabel, bankBtn, resetBankBtn, nowPlayingLbl
+        ] {
             box.contentView?.addSubview(v)
         }
         view.addSubview(box)
@@ -113,14 +164,15 @@ final class PreferencesSecondaryTabsCoordinator: NSObject {
         let leftBox = NSBox(frame: NSRect(x: 16, y: 16, width: 406, height: 410))
         leftBox.title = "Built-in Twinkle Bulbs Screen Saver"
 
-        let modLbl = NSTextField(labelWithString: "Module:")
-        modLbl.frame = NSRect(x: 14, y: 356, width: 70, height: 18)
+        let modLbl = NSTextField(labelWithString: "Module (25):")
+        modLbl.frame = NSRect(x: 14, y: 356, width: 76, height: 18)
+        ssModulePopup.removeAllItems()
         ssModulePopup.addItems(withTitles: ScreenSaverModuleID.allCases.map(\.displayName))
-        ssModulePopup.frame = NSRect(x: 86, y: 352, width: 170, height: 24)
+        ssModulePopup.frame = NSRect(x: 92, y: 352, width: 174, height: 24)
         ssModulePopup.target = self; ssModulePopup.action = #selector(ssControlChanged)
 
         let cfgBtn = NSButton(title: "Configure...", target: self, action: #selector(configureSSModule))
-        cfgBtn.frame = NSRect(x: 266, y: 352, width: 120, height: 26)
+        cfgBtn.frame = NSRect(x: 274, y: 352, width: 112, height: 26)
 
         ssEnableCheck.frame = NSRect(x: 14, y: 318, width: 290, height: 22)
         ssEnableCheck.target = self; ssEnableCheck.action = #selector(ssControlChanged)
@@ -174,30 +226,58 @@ final class PreferencesSecondaryTabsCoordinator: NSObject {
         return item
     }
 
-    // MARK: - Wallpaper Tab (DIALOG/135)
+    // MARK: - Wallpaper Tab (DIALOG/135 — 130 Seasonal Collections + Per-Monitor Apply)
 
     func makeWallpaperTab() -> NSTabViewItem {
         let item = NSTabViewItem(identifier: "wallpaper")
         item.label = "Wallpaper"
-        let view = NSView(frame: NSRect(x: 0, y: 0, width: 710, height: 440))
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 750, height: 480))
 
-        let box = NSBox(frame: NSRect(x: 16, y: 16, width: 340, height: 410))
-        box.title = "Holiday Desktop Wallpapers"
+        let box = NSBox(frame: NSRect(x: 16, y: 16, width: 360, height: 450))
+        box.title = "Seasonal Wallpapers (130 Built-in + User Imports)"
 
-        let lbl = NSTextField(labelWithString: "Select Wallpaper:")
-        lbl.frame = NSRect(x: 14, y: 356, width: 150, height: 18)
-        wallpaperPopup.frame = NSRect(x: 14, y: 326, width: 308, height: 26)
+        let catLbl = NSTextField(labelWithString: "Collection:")
+        catLbl.frame = NSRect(x: 14, y: 394, width: 72, height: 18)
+        wpCategoryPopup.removeAllItems()
+        wpCategoryPopup.addItem(withTitle: "All Collections (130+)")
+        wpCategoryPopup.addItem(withTitle: "Favorites ★")
+        for c in WallpaperThemeCategory.allCases where c != .all {
+            wpCategoryPopup.addItem(withTitle: c.rawValue)
+        }
+        wpCategoryPopup.frame = NSRect(x: 90, y: 390, width: 252, height: 24)
+        wpCategoryPopup.target = self; wpCategoryPopup.action = #selector(wpCategoryChanged)
+
+        let lbl = NSTextField(labelWithString: "Wallpaper:")
+        lbl.frame = NSRect(x: 14, y: 358, width: 72, height: 18)
+        wallpaperPopup.frame = NSRect(x: 90, y: 354, width: 174, height: 24)
         wallpaperPopup.target = self; wallpaperPopup.action = #selector(wallpaperSelectionChanged)
+        wpFavBtn.frame = NSRect(x: 270, y: 353, width: 72, height: 26)
+        wpFavBtn.font = .systemFont(ofSize: 10.5)
+        wpFavBtn.target = self; wpFavBtn.action = #selector(toggleFavoriteWallpaper)
+
+        wpCountLabel.font = .systemFont(ofSize: 10.5)
+        wpCountLabel.textColor = .secondaryLabelColor
+        wpCountLabel.frame = NSRect(x: 14, y: 330, width: 320, height: 16)
 
         let sLbl = NSTextField(labelWithString: "Placement Style:")
-        sLbl.frame = NSRect(x: 14, y: 286, width: 140, height: 18)
+        sLbl.frame = NSRect(x: 14, y: 292, width: 110, height: 18)
+        wpStylePopup.removeAllItems()
         wpStylePopup.addItems(withTitles: WallpaperStyle.allCases.map(\.displayName))
-        wpStylePopup.frame = NSRect(x: 14, y: 256, width: 180, height: 26)
+        wpStylePopup.frame = NSRect(x: 130, y: 288, width: 170, height: 24)
         wpStylePopup.target = self; wpStylePopup.action = #selector(controlChanged)
 
-        wpAutoRotateCheck.frame = NSRect(x: 14, y: 210, width: 230, height: 22)
+        let mLbl = NSTextField(labelWithString: "Target Monitor:")
+        mLbl.frame = NSRect(x: 14, y: 254, width: 110, height: 18)
+        wpMonitorPopup.removeAllItems()
+        wpMonitorPopup.addItem(withTitle: "All Displays")
+        for (idx, scr) in NSScreen.screens.enumerated() {
+            wpMonitorPopup.addItem(withTitle: "Display \(idx + 1) (\(Int(scr.frame.width))×\(Int(scr.frame.height)))")
+        }
+        wpMonitorPopup.frame = NSRect(x: 130, y: 250, width: 212, height: 24)
+
+        wpAutoRotateCheck.frame = NSRect(x: 14, y: 210, width: 236, height: 22)
         wpAutoRotateCheck.target = self; wpAutoRotateCheck.action = #selector(controlChanged)
-        wpFreqField.frame = NSRect(x: 250, y: 210, width: 52, height: 22)
+        wpFreqField.frame = NSRect(x: 256, y: 210, width: 52, height: 22)
 
         let applyWpBtn = NSButton(title: "Set Desktop Wallpaper Now", target: self, action: #selector(applyWallpaperNow))
         applyWpBtn.frame = NSRect(x: 14, y: 146, width: 220, height: 30)
@@ -205,14 +285,14 @@ final class PreferencesSecondaryTabsCoordinator: NSObject {
         let importWpBtn = NSButton(title: "Import Wallpaper Images...", target: self, action: #selector(importWallpapers))
         importWpBtn.frame = NSRect(x: 14, y: 102, width: 220, height: 28)
 
-        for v: NSView in [lbl, wallpaperPopup, sLbl, wpStylePopup, wpAutoRotateCheck, wpFreqField, applyWpBtn, importWpBtn] {
+        for v: NSView in [catLbl, wpCategoryPopup, lbl, wallpaperPopup, wpFavBtn, wpCountLabel, sLbl, wpStylePopup, mLbl, wpMonitorPopup, wpAutoRotateCheck, wpFreqField, applyWpBtn, importWpBtn] {
             box.contentView?.addSubview(v)
         }
         view.addSubview(box)
 
-        let pBox = NSBox(frame: NSRect(x: 368, y: 80, width: 326, height: 346))
-        pBox.title = "Wallpaper Preview"
-        wpPreviewImage.frame = NSRect(x: 10, y: 12, width: 302, height: 302)
+        let pBox = NSBox(frame: NSRect(x: 388, y: 80, width: 344, height: 386))
+        pBox.title = "Live Wallpaper Preview"
+        wpPreviewImage.frame = NSRect(x: 12, y: 18, width: 318, height: 336)
         wpPreviewImage.imageScaling = .scaleProportionallyUpOrDown
         pBox.contentView?.addSubview(wpPreviewImage)
         view.addSubview(pBox)
@@ -251,7 +331,10 @@ final class PreferencesSecondaryTabsCoordinator: NSObject {
         let openCalBtn = NSButton(title: "Open Holiday & Events Calendar Editor...", target: self, action: #selector(openCalendarModal))
         openCalBtn.frame = NSRect(x: 16, y: 40, width: 290, height: 30)
 
-        for v: NSView in [lbl, holidayPopup, countdownStatusLbl, custLbl, customNameField, customDateField, eventMsgsCheck, openCalBtn] {
+        let openAdventBtn = NSButton(title: "Open 24-Day Advent Calendar...", target: self, action: #selector(openAdventModal))
+        openAdventBtn.frame = NSRect(x: 320, y: 40, width: 250, height: 30)
+
+        for v: NSView in [lbl, holidayPopup, countdownStatusLbl, custLbl, customNameField, customDateField, eventMsgsCheck, openCalBtn, openAdventBtn] {
             box.contentView?.addSubview(v)
         }
         view.addSubview(box)
@@ -263,35 +346,37 @@ final class PreferencesSecondaryTabsCoordinator: NSObject {
 
     func makeHelpAndToolsTab() -> NSTabViewItem {
         let item = NSTabViewItem(identifier: "help")
-        item.label = "Help & Import"
-        let view = NSView(frame: NSRect(x: 0, y: 0, width: 710, height: 440))
+        item.label = "Help"
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 750, height: 480))
 
-        let scroll = NSScrollView(frame: NSRect(x: 16, y: 56, width: 678, height: 368))
+        let scroll = NSScrollView(frame: NSRect(x: 16, y: 56, width: 718, height: 408))
         scroll.hasVerticalScroller = true
         let tv = NSTextView(frame: scroll.bounds)
         tv.isEditable = false
-        tv.font = .systemFont(ofSize: 12.5)
+        tv.font = .systemFont(ofSize: 12)
         tv.string = """
-        TWINKLE BULBS 6.0 FOR MACOS — QUICK GUIDE
+        TWINKLE BULBS 6.0 — COMPLETE HOLIDAY EDITION FOR MACOS
 
-        • Flashing Modes (9): None, Random, All Together, Chase, Alternating, Some Bulbs Flash (~30%), Single, Pairs, and Ping-Pong.
-        • Timing (Exact v6.0 Constants):
-          - Fixed patterns step at 1200ms (Slow), 800ms, 500ms (Medium), 350ms, 200ms, or 80ms (Very Fast).
-          - Random bulb durations range from 2000–2700ms (Slow) down to 50–120ms (Very Fast).
-        • Color Modes (21): Random (no immediate neighbor repeat), 7 Solids, Multi-Color, All Colors (+ White), and classic 2/3/4-color holiday sequences.
-        • Display Layer Modes:
-          - On the Desktop: Sits cleanly on the desktop icon layer beneath your open apps.
-          - Always On Top: Floats over workspace windows while passing mouse clicks straight through.
-          - Menu Bar / Taskbar: Places the strand directly along your top Menu Bar strip.
-        • Importing Original Windows Assets (.blb / .icl / .ico / .mid / .jpg):
-          Click "Import .BLB/.ICO..." on the Bulbs tab (or drop files into ~/Library/Application Support/TwinkleBulbs/) to render your own classic Barefoot Productions bulb sets, MIDI music, or wallpapers natively in pure Swift!
-        • Startup Modifiers: Hold Shift at launch to mute sound; hold Option at launch to reset factory defaults.
+        1. CLASSIC v6.0 ENGINE & BULB LIBRARY (265 Sets Total):
+           • 15 Original Classic clean-room sets + 250 Complete Holiday Edition sets across 25 themed collections (1..25).
+           • 9 Authentic Flashing Modes (None, Random, All Together, Chase, Alternating, Some Flash, Single, Pairs, Ping-Pong) & 21 Color Modes with exact 50 ms timing & 1200–80 ms speeds.
+           • Optional Modern Effects (15 patterns: Twinklefox, Meteor, Candle Flicker, Fireworks, Candy Cane, Auto-Cycle, MIDI-Reactive) toggled separately on Bulbs → Flashing without touching classic settings.
+
+        2. SEASONAL SCREEN SAVERS (25 Total Modules):
+           • 4 Classic modules (Blank Screen, Clock, Fireworks, Snowfall), CD Wallpaper Slideshow, + 20 New Seasonal Screen Savers (Christmas Wreath, Tree Glow, Village, Fireplace, Frost, Gingerbread, Autumn Leaves, Glowing Pumpkin, Haunted House, Autumn Forest, Pumpkin Patch, Spring Blossoms, Rain, Easter Garden, Fireflies, Night Sky, Beach Sunset, Valentine's Hearts, New Year's Celebration, Patriotic Celebration).
+           • Programmer Extensibility: Implement TwinkleScreenSaverPlugin and register with ScreenSaverPluginRegistry.shared cleanly in Swift (no integrated Bulb Set Builder is included).
+
+        3. PROGRAMMABLE MIDI JUKEBOX & SOUND BANKS:
+           • 105 Clean-Room Multi-Track Format-1 General MIDI seasonal arrangements paired with macOS Roland GS Wavetable synthesis (gs_instruments.dls) or custom user .SF2/.DLS banks, plus folder discovery for .mid, .midi, .rmi, .mp3, .wav, .aiff, .m4a.
+
+        4. COMMERCIAL CD FEATURES:
+           • 24-Door Interactive Christmas Advent Calendar (Calendar tab), 130 Seasonal Wallpapers (Wallpaper tab with Favorites & Per-Monitor apply), and external .blb / .icl / .ico / standard-compressed .blz bulb import (~/Library/Application Support/TwinkleBulbs/ImportedBulbs/).
         """
         scroll.documentView = tv
         view.addSubview(scroll)
 
         let openSupportBtn = NSButton(title: "Open Application Support Folder", target: self, action: #selector(openAppSupportFolder))
-        openSupportBtn.frame = NSRect(x: 16, y: 14, width: 230, height: 28)
+        openSupportBtn.frame = NSRect(x: 16, y: 14, width: 240, height: 28)
         view.addSubview(openSupportBtn)
 
         item.view = view
@@ -303,6 +388,12 @@ final class PreferencesSecondaryTabsCoordinator: NSObject {
     func loadFromSettings(_ s: AppSettings) {
         musicEnableCheck.state = s.musicEnabled ? .on : .off
         musicOrderPopup.selectItem(at: max(0, min(1, s.musicPlayMode)))
+        musicRepeatPopup.selectItem(at: s.musicRepeatMode.rawValue)
+        musicTrackDelayField.doubleValue = s.musicTrackDelaySeconds
+        musicVolumeSlider.doubleValue = s.musicVolume
+        musicDirField.stringValue = s.musicDirectoryPath
+        let bankName = s.customSoundBankPath.isEmpty ? "Built-in GS Wavetable (gs_instruments.dls)" : (s.customSoundBankPath as NSString).lastPathComponent
+        soundBankLabel.stringValue = "Sound Bank: \(bankName)"
         musicOnlySSCheck.state = s.ssMusic ? .on : .off
         musicPauseCheck.state = s.enablePause ? .on : .off
         musicPauseField.integerValue = s.pauseMinutes
@@ -343,6 +434,10 @@ final class PreferencesSecondaryTabsCoordinator: NSObject {
         owner.draft.bulbChangeFreqMinutes = max(1, owner.draft.bulbChangeFreqMinutes)
         owner.draft.musicEnabled = musicEnableCheck.state == .on
         owner.draft.musicPlayMode = max(0, musicOrderPopup.indexOfSelectedItem)
+        owner.draft.musicRepeatMode = MusicRepeatMode(rawValue: max(0, musicRepeatPopup.indexOfSelectedItem)) ?? .repeatAll
+        owner.draft.musicTrackDelaySeconds = musicTrackDelayField.doubleValue
+        owner.draft.musicVolume = musicVolumeSlider.doubleValue
+        owner.draft.musicDirectoryPath = musicDirField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         owner.draft.ssMusic = musicOnlySSCheck.state == .on
         owner.draft.enablePause = musicPauseCheck.state == .on
         owner.draft.pauseMinutes = max(1, musicPauseField.integerValue)
@@ -380,36 +475,72 @@ final class PreferencesSecondaryTabsCoordinator: NSObject {
         }
     }
 
+    private func updateMusicStatusLabel() {
+        let ae = AudioEngineService.shared
+        if let err = ae.lastErrorMessage, !err.isEmpty {
+            nowPlayingLbl.textColor = .systemRed
+            nowPlayingLbl.stringValue = "Error: \(err)"
+        } else {
+            nowPlayingLbl.textColor = .secondaryLabelColor
+            let stateText = ae.isPaused ? "Paused" : (ae.isPlaying ? "Playing" : "Stopped")
+            let info = ae.currentTrackFormatInfo.isEmpty ? "" : " (\(ae.currentTrackFormatInfo))"
+            nowPlayingLbl.stringValue = "Status: \(stateText) — \(ae.currentTrackTitle)\(info)"
+        }
+    }
+
     private func refreshMusicDropdown() {
         musicPopup.removeAllItems()
         for t in AudioEngineService.shared.tracks {
-            musicPopup.addItem(withTitle: t.title)
+            let tag = t.id.hasPrefix("builtin:") ? "[GM] " : "[User] "
+            musicPopup.addItem(withTitle: "\(tag)\(t.title)")
         }
         let idx = min(AudioEngineService.shared.currentTrackIndex, max(0, AudioEngineService.shared.tracks.count - 1))
         if AudioEngineService.shared.tracks.count > 0 {
             musicPopup.selectItem(at: idx)
         }
-        nowPlayingLbl.stringValue = "Status: \(AudioEngineService.shared.isPlaying ? "Playing \(AudioEngineService.shared.currentTrackTitle)" : "Stopped")"
+        updateMusicStatusLabel()
     }
 
     private func refreshWallpaperDropdown(selectedID: String) {
-        let items = WallpaperService.shared.items
+        let allItems = WallpaperService.shared.items
+        let catSel = wpCategoryPopup.indexOfSelectedItem
+        let favs = owner.draft.favoriteWallpaperIDs
+        let filtered = allItems.filter { item in
+            if catSel == 1 {
+                return favs.contains(item.id)
+            } else if catSel >= 2 {
+                let cats = WallpaperThemeCategory.allCases.filter { $0 != .all }
+                let idx = catSel - 2
+                if idx >= 0, idx < cats.count {
+                    return item.category == cats[idx]
+                }
+            }
+            return true
+        }
+
         wallpaperPopup.removeAllItems()
-        for item in items {
-            wallpaperPopup.addItem(withTitle: item.title)
+        for item in filtered {
+            let star = favs.contains(item.id) ? "★ " : ""
+            wallpaperPopup.addItem(withTitle: "\(star)\(item.title)")
             wallpaperPopup.lastItem?.representedObject = item.id
         }
-        if let idx = items.firstIndex(where: { $0.id == selectedID }) {
+        if let idx = filtered.firstIndex(where: { $0.id == selectedID }) {
             wallpaperPopup.selectItem(at: idx)
+        } else if !filtered.isEmpty {
+            wallpaperPopup.selectItem(at: 0)
+            if let fid = wallpaperPopup.selectedItem?.representedObject as? String {
+                owner.draft.activeWallpaperID = fid
+            }
         }
+        wpCountLabel.stringValue = "Showing \(filtered.count) of \(allItems.count) wallpapers"
         updateWallpaperPreview()
     }
 
     private func updateWallpaperPreview() {
-        let idx = wallpaperPopup.indexOfSelectedItem
-        let items = WallpaperService.shared.items
-        guard idx >= 0, idx < items.count else { return }
-        wpPreviewImage.image = NSImage(contentsOf: items[idx].url)
+        guard let selID = wallpaperPopup.selectedItem?.representedObject as? String,
+              let item = WallpaperService.shared.items.first(where: { $0.id == selID }) else { return }
+        wpPreviewImage.image = WallpaperService.shared.previewImage(for: item)
+        wpFavBtn.title = owner.draft.favoriteWallpaperIDs.contains(selID) ? "★ Fav" : "☆ Favorite"
     }
 
     private func updateCountdownPreview() {
@@ -428,22 +559,77 @@ final class PreferencesSecondaryTabsCoordinator: NSObject {
     @objc private func playSelectedTrack() {
         commitFieldsIntoDraft()
         AudioEngineService.shared.play(trackIndex: musicPopup.indexOfSelectedItem, settings: owner.draft)
-        nowPlayingLbl.stringValue = "Status: Playing \(AudioEngineService.shared.currentTrackTitle)"
+        updateMusicStatusLabel()
+    }
+
+    @objc private func pauseResumeMusic() {
+        commitFieldsIntoDraft()
+        AudioEngineService.shared.togglePause(settings: owner.draft)
+        updateMusicStatusLabel()
     }
 
     @objc private func stopMusic() {
         AudioEngineService.shared.stop()
-        nowPlayingLbl.stringValue = "Status: Stopped"
+        updateMusicStatusLabel()
+    }
+
+    @objc private func previousTrack() {
+        commitFieldsIntoDraft()
+        AudioEngineService.shared.playPrevious(settings: owner.draft)
+        refreshMusicDropdown()
     }
 
     @objc private func nextTrack() {
         commitFieldsIntoDraft()
         AudioEngineService.shared.playNext(settings: owner.draft)
-        nowPlayingLbl.stringValue = "Status: Playing \(AudioEngineService.shared.currentTrackTitle)"
+        refreshMusicDropdown()
+    }
+
+    @objc private func volumeSliderChanged() {
+        commitFieldsIntoDraft()
+        AudioEngineService.shared.setVolume(owner.draft.musicVolume)
+    }
+
+    @objc private func chooseMusicDirectory() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        if panel.runModal() == .OK, let dirURL = panel.url {
+            musicDirField.stringValue = dirURL.path
+            commitFieldsIntoDraft()
+            AudioEngineService.shared.rebuildTrackList(musicDirectoryPath: dirURL.path)
+            refreshMusicDropdown()
+        }
+    }
+
+    @objc private func clearMusicDirectory() {
+        musicDirField.stringValue = ""
+        commitFieldsIntoDraft()
+        AudioEngineService.shared.rebuildTrackList(musicDirectoryPath: "")
+        refreshMusicDropdown()
+    }
+
+    @objc private func chooseSoundBank() {
+        let panel = NSOpenPanel()
+        panel.title = "Choose General MIDI Sound Bank (.sf2 or .dls)"
+        panel.canChooseFiles = true
+        panel.allowsMultipleSelection = false
+        if panel.runModal() == .OK, let bankURL = panel.url {
+            owner.draft.customSoundBankPath = bankURL.path
+            soundBankLabel.stringValue = "Sound Bank: \(bankURL.lastPathComponent)"
+            AudioEngineService.shared.playEffect(.softTick, enabled: owner.draft.soundFX)
+        }
+    }
+
+    @objc private func resetSoundBank() {
+        owner.draft.customSoundBankPath = ""
+        soundBankLabel.stringValue = "Sound Bank: Built-in GS Wavetable (gs_instruments.dls)"
     }
 
     @objc private func importMusicFiles() {
         let panel = NSOpenPanel()
+        panel.title = "Import MIDI / RMI / MP3 / WAV / AIFF Files"
         panel.canChooseFiles = true
         panel.allowsMultipleSelection = true
         if panel.runModal() == .OK {
@@ -452,7 +638,7 @@ final class PreferencesSecondaryTabsCoordinator: NSObject {
                 try? FileManager.default.removeItem(at: d)
                 try? FileManager.default.copyItem(at: u, to: d)
             }
-            AudioEngineService.shared.rebuildTrackList()
+            AudioEngineService.shared.rebuildTrackList(musicDirectoryPath: owner.draft.musicDirectoryPath)
             refreshMusicDropdown()
         }
     }
@@ -524,8 +710,61 @@ final class PreferencesSecondaryTabsCoordinator: NSObject {
                 ssControlChanged()
             }
             return
+        default:
+            // Unified configuration modal for all 20 Seasonal Screen Savers & Wallpaper Slideshow
+            let speedSlider = NSSlider(value: owner.draft.seasonalSSConfig.speed, minValue: 0.3, maxValue: 2.5, target: nil, action: nil)
+            let densSlider = NSSlider(value: owner.draft.seasonalSSConfig.density, minValue: 0.3, maxValue: 2.0, target: nil, action: nil)
+            let brtSlider = NSSlider(value: owner.draft.seasonalSSConfig.brightness, minValue: 0.3, maxValue: 1.0, target: nil, action: nil)
+            let windPop = NSPopUpButton()
+            windPop.addItems(withTitles: AutumnLeavesWind.allCases.map(\.displayName))
+            windPop.selectItem(at: owner.draft.seasonalSSConfig.windCondition.rawValue)
+            let bgPop = NSPopUpButton()
+            bgPop.addItems(withTitles: AutumnLeavesBackground.allCases.map(\.displayName))
+            bgPop.selectItem(at: owner.draft.seasonalSSConfig.leavesBackground.rawValue)
+            let countdownChk = NSButton(checkboxWithTitle: "Show Midnight New Year's Countdown", target: nil, action: nil)
+            countdownChk.state = owner.draft.seasonalSSConfig.showMidnightCountdown ? .on : .off
+            let rmChk = NSButton(checkboxWithTitle: "Reduce Motion", target: nil, action: nil)
+            rmChk.state = owner.draft.seasonalSSConfig.reduceMotion ? .on : .off
+
+            let sLbl = NSTextField(labelWithString: "Speed / Density / Brightness:")
+            stack.addArrangedSubview(sLbl)
+            stack.addArrangedSubview(speedSlider)
+            stack.addArrangedSubview(densSlider)
+            stack.addArrangedSubview(brtSlider)
+            if mod == .fallingAutumnLeaves || mod == .autumnForest {
+                stack.addArrangedSubview(windPop)
+                stack.addArrangedSubview(bgPop)
+            }
+            if mod == .newYearsCelebration {
+                stack.addArrangedSubview(countdownChk)
+            }
+            stack.addArrangedSubview(rmChk)
+            alert.accessoryView = stack
+            alert.addButton(withTitle: "OK"); alert.addButton(withTitle: "Cancel")
+            if alert.runModal() == .alertFirstButtonReturn {
+                owner.draft.seasonalSSConfig.speed = speedSlider.doubleValue
+                owner.draft.seasonalSSConfig.density = densSlider.doubleValue
+                owner.draft.seasonalSSConfig.brightness = brtSlider.doubleValue
+                owner.draft.seasonalSSConfig.windCondition = AutumnLeavesWind(rawValue: max(0, windPop.indexOfSelectedItem)) ?? .breezy
+                owner.draft.seasonalSSConfig.leavesBackground = AutumnLeavesBackground(rawValue: max(0, bgPop.indexOfSelectedItem)) ?? .twilightSunset
+                owner.draft.seasonalSSConfig.showMidnightCountdown = countdownChk.state == .on
+                owner.draft.seasonalSSConfig.reduceMotion = rmChk.state == .on
+                ssControlChanged()
+            }
+            return
         }
-        alert.runModal()
+    }
+
+    @objc private func wpCategoryChanged() {
+        refreshWallpaperDropdown(selectedID: owner.draft.activeWallpaperID)
+    }
+
+    @objc private func toggleFavoriteWallpaper() {
+        guard let selID = wallpaperPopup.selectedItem?.representedObject as? String else { return }
+        var favs = owner.draft.favoriteWallpaperIDs
+        if let idx = favs.firstIndex(of: selID) { favs.remove(at: idx) } else { favs.append(selID) }
+        owner.draft.favoriteWallpaperIDs = favs
+        refreshWallpaperDropdown(selectedID: selID)
     }
 
     @objc private func testScreenSaver() {
@@ -540,7 +779,9 @@ final class PreferencesSecondaryTabsCoordinator: NSObject {
 
     @objc private func applyWallpaperNow() {
         commitFieldsIntoDraft()
-        _ = WallpaperService.shared.applyWallpaper(id: owner.draft.activeWallpaperID, style: owner.draft.wallpaperType)
+        let mIdx = wpMonitorPopup.indexOfSelectedItem
+        let targetScreen: NSScreen? = (mIdx >= 1 && mIdx - 1 < NSScreen.screens.count) ? NSScreen.screens[mIdx - 1] : nil
+        _ = WallpaperService.shared.applyWallpaper(id: owner.draft.activeWallpaperID, style: owner.draft.wallpaperType, screen: targetScreen)
         AudioEngineService.shared.playEffect(.celebrate, enabled: owner.draft.soundFX)
     }
 
@@ -561,6 +802,7 @@ final class PreferencesSecondaryTabsCoordinator: NSObject {
 
     @objc private func calendarChanged() { updateCountdownPreview() }
     @objc private func openCalendarModal() { owner.onOpenCalendarViewer?() }
+    @objc private func openAdventModal() { owner.onOpenAdventCalendar?() }
 
     @objc private func openAppSupportFolder() {
         let dir = BulbArtworkRegistry.importedBulbsDirectory.deletingLastPathComponent()
